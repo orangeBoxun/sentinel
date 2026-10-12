@@ -1,0 +1,82 @@
+<Window x:Class="Sentinel.Setup.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Style="{StaticResource AppWindow}"
+        Icon="Assets/sentinel.ico"
+        Title="Sentinel 安装程序"
+        Width="760" Height="640" MinWidth="620" MinHeight="520">
+
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="12" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <StackPanel Grid.Row="0" Margin="28,24,28,18">
+            <TextBlock x:Name="ModeTitle" Style="{StaticResource H1}" Text="Sentinel" />
+            <TextBlock x:Name="IntroText" Style="{StaticResource Hint}" Margin="0,7,0,0"
+                       Text="把监控程序装到这台机器上：复制文件、设置权限、注册一个后台服务。服务会负责拉起界面，并在它掉线时把它拉回来。" />
+        </StackPanel>
+
+        <ScrollViewer Grid.Row="1" Margin="28,0,28,0" VerticalScrollBarVisibility="Auto">
+            <StackPanel>
+                <Border x:Name="DirCard" Style="{StaticResource Card}">
+                    <StackPanel>
+                        <TextBlock Style="{StaticResource H2}" Text="装到哪里" />
+                        <TextBlock x:Name="StatusText" Style="{StaticResource Hint}" Margin="0,8,0,0" />
+
+                        <WrapPanel Margin="0,14,0,0">
+                            <TextBox x:Name="DirBox" Width="380" Style="{StaticResource MonoTextBox}" />
+                            <Button x:Name="BrowseButton" Style="{StaticResource ToolIconButton}" Tag="{StaticResource IconFolder}"
+                                    Content="浏览…" Margin="8,0,0,0" Click="Browse_Click" />
+                            <Button x:Name="DetectButton" Style="{StaticResource ToolIconButton}" Tag="{StaticResource IconRefresh}"
+                                    Content="重新检测" Margin="8,0,0,0" Click="Detect_Click" />
+                        </WrapPanel>
+
+                        <TextBlock Style="{StaticResource Caption}" Margin="0,10,0,0" TextWrapping="Wrap"
+                                   Text="程序放在 &lt;这里&gt;\bin\ ；配置是 &lt;这里&gt;\config.json ；审计日志在 &lt;这里&gt;\logs\ 。装到已经装过的位置上就是更新，配置会留着。" />
+                    </StackPanel>
+                </Border>
+
+                <Border Style="{StaticResource Card}" Margin="0,16,0,0">
+                    <StackPanel>
+                        <TextBlock Style="{StaticResource H2}" Text="过程" />
+                        <TextBlock x:Name="StepText" Style="{StaticResource Hint}" Margin="0,8,0,0" />
+                        <ProgressBar x:Name="Bar" Height="4" Margin="0,12,0,0" IsIndeterminate="True" Visibility="Collapsed" />
+                        <TextBox x:Name="LogBox" IsReadOnly="True" AcceptsReturn="True" TextWrapping="NoWrap"
+                                 Style="{StaticResource MonoTextBox}" Height="Auto" MinHeight="180" MaxHeight="260"
+                                 Margin="0,12,0,0" VerticalScrollBarVisibility="Auto"
+                                 HorizontalScrollBarVisibility="Auto" />
+                    </StackPanel>
+                </Border>
+            </StackPanel>
+        </ScrollViewer>
+
+        <StackPanel Grid.Row="2" Margin="28,18,28,16">
+            <WrapPanel>
+                <Button x:Name="InstallButton" Style="{StaticResource PrimaryIconButton}" Tag="{StaticResource IconCheck}"
+                        Content="安装 / 更新" Click="Install_Click" />
+                <Button x:Name="UninstallButton" Style="{StaticResource ToolIconButton}" Tag="{StaticResource IconTrash}"
+                        Content="卸载…" Margin="8,0,0,0" Click="Uninstall_Click" />
+                <CheckBox x:Name="PurgeCheck" Content="连配置和日志一起删掉" VerticalAlignment="Center" Margin="16,0,0,0" />
+                <Button x:Name="OpenFolderButton" Style="{StaticResource ToolIconButton}" Tag="{StaticResource IconFolder}"
+                        Content="打开安装位置" Margin="16,0,0,0" Click="OpenFolder_Click" />
+            </WrapPanel>
+        </StackPanel>
+
+        <Border Grid.Row="3" Background="{StaticResource KnotBand}" />
+
+        <StatusBar Grid.Row="4">
+            <StatusBarItem>
+                <TextBlock x:Name="StatusBarText" Text="就绪。" />
+            </StatusBarItem>
+            <Separator Style="{StaticResource StatusBarSeparator}" />
+            <StatusBarItem>
+                <TextBlock x:Name="DirStateText" />
+            </StatusBarItem>
+        </StatusBar>
+    </Grid>
+</Window>

@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sentinel 密钥对生成</title>
+<style>
+  :root { color-scheme: light dark; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0 auto; padding: 20px 16px 60px; max-width: 760px;
+    font: 15px/1.6 system-ui, -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+  }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  p.lead { margin: 0 0 18px; color: #666; }
+  .note {
+    background: #f2f6fb; border: 1px solid #d5e0ee; border-radius: 6px;
+    padding: 10px 12px; margin: 0 0 20px; color: #345; font-size: 14px;
+  }
+  h2 { font-size: 15px; margin: 24px 0 6px; }
+  .hint { color: #666; font-size: 14px; margin: 0 0 8px; }
+  textarea {
+    width: 100%; font-family: ui-monospace, Consolas, monospace; font-size: 13px;
+    padding: 10px; border: 1px solid #bbb; border-radius: 6px; resize: vertical;
+  }
+  #pub { min-height: 140px; }
+  button {
+    font: inherit; padding: 10px 18px; border-radius: 6px; border: 1px solid #888;
+    background: #f7f7f7; cursor: pointer; margin: 10px 8px 0 0;
+  }
+  button.primary { background: #2f6fd0; border-color: #2f6fd0; color: #fff; font-weight: 600; }
+  button:disabled { opacity: .5; cursor: not-allowed; }
+  .row { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; margin-top: 10px; }
+  #result { margin-top: 8px; display: none; }
+  #result.shown { display: block; }
+  .steps { background: #f6f6f6; border-radius: 6px; padding: 12px 14px; font-size: 14px; }
+  .steps li { margin: 6px 0; }
+  .err { color: #b3261e; }
+  .ok { color: #1a7f37; }
+  footer { margin-top: 34px; color: #777; font-size: 13px; }
+  footer ul { margin: 8px 0 14px; padding-left: 22px; }
+  footer li { margin: 5px 0; line-height: 1.55; }
+  code { background: #eee; padding: 1px 5px; border-radius: 4px; }
+  .danger { color: #b3261e; font-weight: 600; }
+</style>
+</head>
+<body>
+
+<h1>Sentinel 密钥对生成</h1>
+<p class="lead">生成一对钥匙：公钥给电脑，私钥留给手机。</p>
+
+<div class="note">
+  <b>这个页面不联网。</b>它是一个单独的本地文件，没有任何网络请求 —— 私钥只在你的浏览器里生成，
+  不会发到任何地方。你可以断网之后再打开它来确认这一点。
+</div>
+
+<p class="hint">
+  这一步<strong>一辈子只做一次</strong>。以后真正需要一直带着的是
+  <code>sentinel-sign.html</code>（签名页）—— 这个生成页留着无妨，用不上了而已。
+</p>
+
+<div class="row">
+  <button class="primary" id="gen">生成密钥对（2048 位）</button>
+</div>
+
+<div id="status" style="margin-top:12px"></div>
+
+<div id="result">
+  <h2>1. 公钥 —— 复制这一份回电脑</h2>
+  <p class="hint">在 Sentinel 的「概览 → 解锁保护 → 开启解锁保护…」里，粘进那个「公钥」框。</p>
+  <textarea id="pub" readonly spellcheck="false"></textarea>
+  <div class="row">
+    <button class="primary" id="copypub">复制公钥</button>
+    <button id="dlpriv">下载私钥文件</button>
+  </div>
+
+  <h2>2. 私钥 —— 存进手机保险箱</h2>
+  <div class="steps">
+    <ol>
+      <li>点上面「下载私钥文件」，得到一个 <code>unlock-private.pem</code>。</li>
+      <li>把它存进你的手机保险箱（或任何你信得过、并且<b>不在电脑上</b>的地方）。</li>
+      <li><b>存好之后，把下载出来的那一份从手机文件里删掉</b> —— 只留保险箱里那份。</li>
+    </ol>
+  </div>
+</div>
+
+<footer>
+  <b>用完要删的东西</b>
+  <ul>
+    <li>从保险箱取出来、临时放在某台设备上的<b>私钥副本</b> —— 用完就删。</li>
+    <li>
+      保险箱里那份<b>私钥不要删</b>，也不要留副本在电脑上。它是你日后唯一能放宽限制的东西，
+      而且<b>丢了就再也放宽不了了</b>。
+    </li>
+  </ul>
+</footer>
+
+<script>
+"use strict";
+
+const $ = (id) => document.getElementById(id);
+
+function setStatus(message, kind) {
+  const el = $("status");
+  el.textContent = message || "";
+  el.className = kind || "";
+}
+
+const toPem = (label, bytes) => {
+  let bin = "";
+  for (const b of bytes) bin += String.fromCharCode(b);
+  const body = btoa(bin).replace(/(.{64})/g, "$1\n").replace(/\n$/, "");
+  return `-----BEGIN ${label}-----\n${body}\n-----END ${label}-----`;
+};
+
+// 和签名页用的是同一套参数（RSA-PSS / SHA-256 / 2048 位）。两边必须一致，
+// 否则生成出来的钥匙在签名那边用不了 —— 而那种错要等到你第一次真要解锁时才发现。
+async function generateKeypair() {
+  const pair = await crypto.subtle.generateKey(
+    { name: "RSA-PSS", modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: "SHA-256" },
+    true,
+    ["sign", "verify"]);
+
+  const spki = new Uint8Array(await crypto.subtle.exportKey("spki", pair.publicKey));
+  const pkcs8 = new Uint8Array(await crypto.subtle.exportKey("pkcs8", pair.privateKey));
+
+  return { publicPem: toPem("PUBLIC KEY", spki), privatePem: toPem("PRIVATE KEY", pkcs8) };
+}
+
+let privatePem = null;
+
+$("gen").addEventListener("click", async () => {
+  const button = $("gen");
+  button.disabled = true;
+  $("result").classList.remove("shown");
+  setStatus("正在生成…");
+
+  try {
+    const pair = await generateKeypair();
+
+    privatePem = pair.privatePem;
+    $("pub").value = pair.publicPem;
+    $("result").classList.add("shown");
+
+    setStatus("生成好了。先把公钥复制回电脑，再把私钥存进保险箱。", "ok");
+  } catch (ex) {
+    setStatus("生成失败：" + ex.message, "err");
+  } finally {
+    button.disabled = false;
+  }
+});
+
+$("copypub").addEventListener("click", async () => {
+  try {
+    await navigator.clipboard.writeText($("pub").value);
+    setStatus("公钥已复制。", "ok");
+  } catch {
+    // Clipboard access is refused in some contexts; selecting it lets the user copy by hand.
+    $("pub").select();
+    setStatus("自动复制失败了 —— 已经帮你选中，按 Ctrl+C（手机上长按）复制。", "");
+  }
+});
+
+$("dlpriv").addEventListener("click", () => {
+  if (!privatePem) return;
+
+  const url = URL.createObjectURL(new Blob([privatePem], { type: "application/x-pem-file" }));
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = "unlock-private.pem";
+  a.click();
+  URL.revokeObjectURL(url);
+
+  setStatus("私钥已下载。存进保险箱之后，把下载出来的那份删掉。", "ok");
+});
+</script>
+
+</body>
+</html>

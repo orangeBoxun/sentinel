@@ -1,0 +1,1322 @@
+<!-- Sentinel shared visual theme: cool neutral surfaces, restrained color and Chinese-first typography. Presentation only. -->
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+                    xmlns:sys="clr-namespace:System;assembly=System.Runtime">
+
+    <!-- ================================================================ 颜色 -->
+
+    <!--
+        三层：侧栏（深一档）→ 画布（浅）→ 卡片（白）。
+
+        上一版整体压得太深了 —— 这是个浅色界面，底色一深就发闷。现在整体提亮，靠"侧栏比画布深"
+        而不是"两边都深"来分开。
+    -->
+    <SolidColorBrush x:Key="SidebarFill" Color="#F2F3F6" />
+    <SolidColorBrush x:Key="SidebarHover" Color="#E8EBF0" />
+
+    <!-- A clean canvas; ornament is reserved for the window bands. -->
+    <SolidColorBrush x:Key="Canvas" Color="#FFFFFF" />
+
+    <SolidColorBrush x:Key="Surface" Color="#FFFFFF" />
+    <SolidColorBrush x:Key="Fill" Color="#F5F6F8" />
+    <SolidColorBrush x:Key="FillHover" Color="#E8EAEE" />
+    <SolidColorBrush x:Key="FillActive" Color="#DEE2E8" />
+
+    <!--
+        选中：一层淡绿 + 绿字。
+
+        绿色在这个界面里本来是"运行中"的意思，拿来做选中是越界的 —— 但选中只出现在导航栏和列表里，
+        和状态卡隔得很远，不会看混。而且灰底实在太弱，"我在哪一页"要凑近才看得出来。
+    -->
+    <SolidColorBrush x:Key="SelectionFill" Color="#E2EFE8" />
+    <SolidColorBrush x:Key="SelectionInk" Color="#28664F" />
+
+    <SolidColorBrush x:Key="TextPrimary" Color="#24262D" />
+    <SolidColorBrush x:Key="TextSecondary" Color="#626774" />
+    <SolidColorBrush x:Key="TextTertiary" Color="#7B8190" />
+    <SolidColorBrush x:Key="TextOnInk" Color="#FFFFFF" />
+
+    <!-- 线：默认几乎看不见。分隔靠留白，线只在"不说清就分不开"的地方出现。 -->
+    <SolidColorBrush x:Key="Hairline" Color="#E7E9EF" />
+    <SolidColorBrush x:Key="HairlineStrong" Color="#D9DDE5" />
+    <SolidColorBrush x:Key="HairlineHover" Color="#BFC6D0" />
+
+    <!-- 主按钮的底色。近黑是这个风格里最响的一次"这里可以点"。 -->
+    <SolidColorBrush x:Key="Ink" Color="#24262D" />
+    <SolidColorBrush x:Key="InkHover" Color="#363A44" />
+    <SolidColorBrush x:Key="FocusRing" Color="#7AA68F" />
+
+    <!-- Green interaction accents complement the individually tinted navigation icons. -->
+    <SolidColorBrush x:Key="Accent" Color="#477B68" />
+    <SolidColorBrush x:Key="AccentSubtle" Color="#EDF5F0" />
+    <SolidColorBrush x:Key="AccentBorder" Color="#A9CABB" />
+
+    <!--
+        导航图标各用一个颜色，八个页面分得开。
+
+        都压过饱和度和明度（不是纯色）—— 纯色小图标在浅底上会像贴纸；压过之后是"有颜色"而不是
+        "花花绿绿"，一屏看下去有层次但不会打架。这是这个界面最主要的彩色来源。
+    -->
+    <SolidColorBrush x:Key="TintBlue" Color="#6086B8" />
+    <SolidColorBrush x:Key="TintAmber" Color="#B28B4E" />
+    <SolidColorBrush x:Key="TintTeal" Color="#4A8D89" />
+    <SolidColorBrush x:Key="TintViolet" Color="#8873AF" />
+    <SolidColorBrush x:Key="TintRose" Color="#AE7087" />
+    <SolidColorBrush x:Key="TintIndigo" Color="#727FB0" />
+    <SolidColorBrush x:Key="TintSlate" Color="#7B899C" />
+    <SolidColorBrush x:Key="TintGreen" Color="#668F70" />
+
+    <!-- 大语言模型那一页。压到和其他几个同样的饱和度，不然它一个人跳出来。 -->
+    <SolidColorBrush x:Key="TintPlum" Color="#8E6FA8" />
+
+    <!-- 服务商列表里那个方形头像块的底：和 TintPlum 同一支，只是淡到能当背景。 -->
+    <SolidColorBrush x:Key="TintPlumSurface" Color="#F2EEF7" />
+
+    <!-- 只有这三个是真彩色，且只在报状态时出现。 -->
+    <SolidColorBrush x:Key="Danger" Color="#B34F56" />
+    <SolidColorBrush x:Key="DangerSurface" Color="#FCF0F1" />
+    <SolidColorBrush x:Key="DangerBorder" Color="#EACDD1" />
+
+    <SolidColorBrush x:Key="Warning" Color="#916D32" />
+    <SolidColorBrush x:Key="WarningSurface" Color="#FBF6EC" />
+    <SolidColorBrush x:Key="WarningBorder" Color="#E8DCC1" />
+
+    <SolidColorBrush x:Key="Success" Color="#36765B" />
+    <SolidColorBrush x:Key="SuccessSurface" Color="#EFF7F2" />
+
+    <SolidColorBrush x:Key="ScrollThumbFill" Color="#CCD0D9" />
+    <SolidColorBrush x:Key="ScrollThumbFillHover" Color="#A8AFBD" />
+
+    <!-- 悬停/按下统一用一层半透明黑盖上去，任何底色都只需要一条模板。 -->
+    <SolidColorBrush x:Key="OverlayHover" Color="#0F000000" />
+    <SolidColorBrush x:Key="OverlayPressed" Color="#1F000000" />
+
+    <!-- ================================================================ 字体 -->
+
+    <!--
+        中文在前。列表是第一顺位定，WPF 用它决定行高和基线，只有它缺字形时才往后退 —— 所以顺序放反
+        （Segoe UI 在前）会让中文的度量来自西文字体，中英混排时字重和基线都对不齐，看着就是"怪"。
+
+        这个界面的文字绝大多数是中文，所以以中文为准。想换回西文在前，调这一行即可。
+    -->
+    <FontFamily x:Key="UiFont">Microsoft YaHei UI, Segoe UI Variable Text, Segoe UI</FontFamily>
+    <FontFamily x:Key="DisplayFont">Microsoft YaHei UI, Segoe UI Variable Display, Segoe UI</FontFamily>
+    <FontFamily x:Key="MonoFont">Cascadia Mono, Consolas, Microsoft YaHei UI</FontFamily>
+
+    <sys:Double x:Key="FontSizeBody">14</sys:Double>
+    <sys:Double x:Key="FontSizeSmall">13</sys:Double>
+
+    <!-- 段落行高。中文比拉丁文需要更多行距，13.5px 配 20 的倍率在这个字号下是挤的。 -->
+    <sys:Double x:Key="LineHeightBody">22</sys:Double>
+
+    <!-- ================================================================ 文字 -->
+
+    <!-- Content typography uses regular weight: page title 21, section title 15, body 14, labels 13. -->
+    <Style x:Key="H1" TargetType="TextBlock">
+        <Setter Property="FontFamily" Value="{StaticResource DisplayFont}" />
+        <Setter Property="FontSize" Value="21" />
+        <Setter Property="FontWeight" Value="Normal" />
+        <Setter Property="Foreground" Value="{StaticResource TextPrimary}" />
+    </Style>
+
+    <!-- 卡片标题 -->
+    <Style x:Key="H2" TargetType="TextBlock">
+        <Setter Property="FontFamily" Value="{StaticResource UiFont}" />
+        <Setter Property="FontSize" Value="15" />
+        <Setter Property="FontWeight" Value="Normal" />
+        <Setter Property="Foreground" Value="{StaticResource TextPrimary}" />
+    </Style>
+
+    <!-- Regular-weight labels; spacing stays local to each field. -->
+    <Style x:Key="FieldLabel" TargetType="TextBlock">
+        <Setter Property="FontFamily" Value="{StaticResource UiFont}" />
+        <Setter Property="FontSize" Value="{StaticResource FontSizeSmall}" />
+        <Setter Property="FontWeight" Value="Normal" />
+        <Setter Property="Foreground" Value="{StaticResource TextSecondary}" />
+    </Style>
+
+    <Style x:Key="Hint" TargetType="TextBlock">
+        <Setter Property="FontFamily" Value="{StaticResource UiFont}" />
+        <Setter Property="FontSize" Value="{StaticResource FontSizeBody}" />
+        <Setter Property="Foreground" Value="{StaticResource TextSecondary}" />
+        <Setter Property="TextWrapping" Value="Wrap" />
+        <Setter Property="LineHeight" Value="{StaticResource LineHeightBody}" />
+        <Setter Property="TextOptions.TextFormattingMode" Value="Display" />
+    </Style>
+
+    <Style x:Key="Caption" TargetType="TextBlock">
+        <Setter Property="FontFamily" Value="{StaticResource UiFont}" />
+        <Setter Property="FontSize" Value="{StaticResource FontSizeSmall}" />
+        <Setter Property="Foreground" Value="{StaticResource TextTertiary}" />
+    </Style>
+
+    <!--
+        「有未保存的修改」。
+
+        它要解决的是一个**没有任何提示**的问题：表单改动只在点「应用修改」时才写下去，在那之前
+        切页签或换选中项，改动就静悄悄地没了，而界面上看起来你已经改好了。
+
+        用交互色（绿）而不是警告色：这不是出错，是一件事在等你点头。默认收起，脏了才显示。
+    -->
+    <Style x:Key="DirtyMark" TargetType="TextBlock">
+        <Setter Property="FontFamily" Value="{StaticResource UiFont}" />
+        <Setter Property="FontSize" Value="{StaticResource FontSizeSmall}" />
+        <Setter Property="FontWeight" Value="SemiBold" />
+        <Setter Property="Foreground" Value="{StaticResource SelectionInk}" />
+        <Setter Property="VerticalAlignment" Value="Center" />
+        <Setter Property="Margin" Value="0,0,12,0" />
+        <Setter Property="Visibility" Value="Collapsed" />
+        <Setter Property="TextOptions.TextFormattingMode" Value="Display" />
+    </Style>
+
+    <!-- Numeric emphasis uses size rather than a heavier font weight. -->
+
+    <!-- 大数字：只用在真正值得一眼扫到的量上（几个目标、几条策略） -->
+    <Style x:Key="StatNumber" TargetType="TextBlock">
+        <Setter Property="FontFamily" Value="{StaticResource DisplayFont}" />
+        <Setter Property="FontSize" Value="26" />
+        <Setter Property="FontWeight" Value="Normal" />
+        <Setter Property="Foreground" Value="{StaticResource TextPrimary}" />
+    </Style>
+
+    <!-- 大数字下面那行小字 -->
+    <Style x:Key="StatLabel" TargetType="TextBlock">
+        <Setter Property="FontFamily" Value="{StaticResource UiFont}" />
+        <Setter Property="FontSize" Value="11.5" />
+        <Setter Property="Foreground" Value="{StaticResource TextTertiary}" />
+        <Setter Property="Margin" Value="0,2,0,0" />
+    </Style>
+
+    <!-- 最小的一档：给一组东西起名，不该跟正文抢 -->
+    <Style x:Key="Micro" TargetType="TextBlock">
+        <Setter Property="FontFamily" Value="{StaticResource UiFont}" />
+        <Setter Property="FontSize" Value="11.5" />
+        <Setter Property="FontWeight" Value="Normal" />
+        <Setter Property="Foreground" Value="{StaticResource TextTertiary}" />
+    </Style>
+
+    <Style x:Key="ErrorText" TargetType="TextBlock">
+        <Setter Property="FontFamily" Value="{StaticResource UiFont}" />
+        <Setter Property="Foreground" Value="{StaticResource Danger}" />
+        <Setter Property="TextWrapping" Value="Wrap" />
+        <Setter Property="LineHeight" Value="{StaticResource LineHeightBody}" />
+    </Style>
+
+    <!-- 等宽的小字，用来放路径、指纹、解锁码这类东西 -->
+    <Style x:Key="MonoCaption" TargetType="TextBlock">
+        <Setter Property="FontFamily" Value="{StaticResource MonoFont}" />
+        <Setter Property="FontSize" Value="12" />
+        <Setter Property="Foreground" Value="{StaticResource TextTertiary}" />
+        <Setter Property="TextWrapping" Value="Wrap" />
+        <Setter Property="LineHeight" Value="19" />
+    </Style>
+
+    <!-- ================================================================ 容器 -->
+
+    <Style x:Key="Card" TargetType="Border">
+        <Setter Property="Background" Value="{StaticResource Surface}" />
+        <!-- Flat white surface; one hairline establishes the grouping. -->
+        <Setter Property="CornerRadius" Value="8" />
+        <Setter Property="Padding" Value="20" />
+        <Setter Property="BorderBrush" Value="{StaticResource Hairline}" />
+        <Setter Property="BorderThickness" Value="1" />
+        <Setter Property="SnapsToDevicePixels" Value="True" />
+
+    </Style>
+
+
+    <Style x:Key="CardTight" TargetType="Border" BasedOn="{StaticResource Card}">
+        <Setter Property="Padding" Value="16" />
+    </Style>
+
+    <!-- 页面内容的一层：给足留白。参照的界面都不省这个。 -->
+    <Style x:Key="Page" TargetType="StackPanel">
+        <Setter Property="Margin" Value="32,26,32,32" />
+    </Style>
+
+    <!--
+        一个"字段"：标签 + 输入框，固定宽度，放进 WrapPanel 里。
+
+        宽窗口下自动排成多列，窄窗口下退回一列 —— 这才是自适应：布局跟着宽度**重排**，
+        而不是把内容锁死在一个最大宽度里、两边留白。
+    -->
+    <Style x:Key="FieldBlock" TargetType="StackPanel">
+        <Setter Property="Width" Value="268" />
+        <Setter Property="Margin" Value="0,0,18,16" />
+    </Style>
+
+    <!-- 长文本框（多行）用的整行字段块 -->
+    <Style x:Key="FieldBlockWide" TargetType="StackPanel">
+        <Setter Property="Margin" Value="0,0,18,16" />
+        <Setter Property="MinWidth" Value="268" />
+    </Style>
+
+    <!-- ================================================================ 窗口 -->
+
+    <!-- 显式套在每个窗口上。WPF 的隐式样式按元素的确切类型查找，MainWindow 这类派生类拿不到
+         TargetType="Window" 的隐式样式，所以只能这样给。 -->
+    <Style x:Key="AppWindow" TargetType="Window">
+        <Setter Property="Background" Value="{StaticResource Canvas}" />
+        <Setter Property="Foreground" Value="{StaticResource TextPrimary}" />
+        <Setter Property="FontFamily" Value="{StaticResource UiFont}" />
+        <Setter Property="FontSize" Value="{StaticResource FontSizeBody}" />
+        <Setter Property="UseLayoutRounding" Value="True" />
+        <!-- Display aligns small Chinese text to device pixels. Use the same mode for labels and hints. -->
+        <Setter Property="TextOptions.TextFormattingMode" Value="Display" />
+        <Setter Property="TextOptions.TextRenderingMode" Value="ClearType" />
+    </Style>
+
+    <!-- ================================================================ 按钮 -->
+
+    <ControlTemplate x:Key="OverlayButtonTemplate" TargetType="ButtonBase">
+        <Border x:Name="Chrome"
+                Background="{TemplateBinding Background}"
+                BorderBrush="{TemplateBinding BorderBrush}"
+                BorderThickness="{TemplateBinding BorderThickness}"
+                CornerRadius="6"
+                SnapsToDevicePixels="True">
+            <Grid>
+                <Border x:Name="Overlay" CornerRadius="6"
+                        Background="{StaticResource OverlayHover}" Opacity="0"
+                        IsHitTestVisible="False" />
+                <ContentPresenter Margin="{TemplateBinding Padding}"
+                                  HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"
+                                  VerticalAlignment="{TemplateBinding VerticalContentAlignment}"
+                                  RecognizesAccessKey="True" />
+            </Grid>
+        </Border>
+        <ControlTemplate.Triggers>
+            <Trigger Property="IsMouseOver" Value="True">
+                <Setter TargetName="Overlay" Property="Opacity" Value="1" />
+            </Trigger>
+            <Trigger Property="IsPressed" Value="True">
+                <Setter TargetName="Overlay" Property="Background" Value="{StaticResource OverlayPressed}" />
+                <Setter TargetName="Overlay" Property="Opacity" Value="1" />
+            </Trigger>
+            <Trigger Property="IsEnabled" Value="False">
+                <Setter TargetName="Chrome" Property="Opacity" Value="0.4" />
+            </Trigger>
+        </ControlTemplate.Triggers>
+    </ControlTemplate>
+
+    <!-- 默认按钮：白底 + 一条浅边。输入框现在是灰填充无边，两者必须一眼分得开 ——
+         按钮是"可以点"，输入框是"可以写"，长得像就麻烦了。 -->
+    <Style TargetType="Button">
+        <Setter Property="FontSize" Value="{StaticResource FontSizeBody}" />
+        <Setter Property="FontWeight" Value="Normal" />
+        <Setter Property="FontFamily" Value="{StaticResource UiFont}" />
+        <Setter Property="Background" Value="{StaticResource Surface}" />
+        <Setter Property="Foreground" Value="{StaticResource TextPrimary}" />
+        <Setter Property="BorderBrush" Value="{StaticResource HairlineStrong}" />
+        <Setter Property="BorderThickness" Value="1" />
+        <Setter Property="Padding" Value="12,5" />
+        <Setter Property="MinHeight" Value="32" />
+        <Setter Property="MinWidth" Value="0" />
+        <Setter Property="Cursor" Value="Hand" />
+        <Setter Property="HorizontalContentAlignment" Value="Center" />
+        <Setter Property="VerticalContentAlignment" Value="Center" />
+        <Setter Property="SnapsToDevicePixels" Value="True" />
+        <Setter Property="Template" Value="{StaticResource OverlayButtonTemplate}" />
+    </Style>
+
+    <Style x:Key="PrimaryButton" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+        <Setter Property="FontFamily" Value="{StaticResource UiFont}" />
+        <Setter Property="Background" Value="{StaticResource Accent}" />
+        <Setter Property="BorderThickness" Value="0" />
+        <Setter Property="Foreground" Value="{StaticResource TextOnInk}" />
+    </Style>
+
+    <Style x:Key="DangerButton" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+        <Setter Property="FontFamily" Value="{StaticResource UiFont}" />
+        <Setter Property="Background" Value="Transparent" />
+        <Setter Property="Foreground" Value="{StaticResource Danger}" />
+    </Style>
+
+    <!-- 无底色的按钮：次要操作，比如"取消" -->
+    <Style x:Key="GhostButton" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+        <Setter Property="FontFamily" Value="{StaticResource UiFont}" />
+        <Setter Property="Background" Value="Transparent" />
+        <Setter Property="Foreground" Value="{StaticResource TextSecondary}" />
+    </Style>
+
+    <!-- 工具条上的小按钮。没有底色：输入框现在也是浅填充，工具按钮再填一层就会跟输入框混淆。 -->
+    <Style x:Key="ToolButton" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+        <Setter Property="FontFamily" Value="{StaticResource UiFont}" />
+        <Setter Property="Background" Value="Transparent" />
+        <Setter Property="Padding" Value="10,4" />
+        <Setter Property="MinHeight" Value="30" />
+        <Setter Property="Foreground" Value="{StaticResource TextSecondary}" />
+    </Style>
+
+    <!-- ================================================================ 输入 -->
+
+    <Style TargetType="TextBox">
+        <Setter Property="FontSize" Value="{StaticResource FontSizeBody}" />
+        <Setter Property="FontWeight" Value="Normal" />
+        <Setter Property="FontFamily" Value="{StaticResource UiFont}" />
+        <!--
+            浅色填充 + 无描边，而不是"白底 + 一圈灰线"。
+
+            描边输入框在浅色界面上会显得又僵又臃肿：整页十几个框，每个都画四条边，眼睛全是横线。
+            参照的几个界面都是填充式的 —— 框靠底色区分，只有聚焦时才有边。
+        -->
+        <Setter Property="Background" Value="{StaticResource Fill}" />
+        <Setter Property="Foreground" Value="{StaticResource TextPrimary}" />
+        <Setter Property="BorderBrush" Value="Transparent" />
+        <Setter Property="BorderThickness" Value="1" />
+        <Setter Property="Padding" Value="10,5" />
+        <!-- 固定高度，不用 MinHeight。空文本框的期望高度被 WPF 算成了两行（实测 53px 对 17px 的字），
+             MinHeight 压不住它。写死高度还有额外好处：单行框在任何字体和缩放下都一样高。
+             AcceptsReturn 的多行框自己声明了 Height，会覆盖这里。 -->
+        <Setter Property="Height" Value="32" />
+        <Setter Property="CaretBrush" Value="{StaticResource TextPrimary}" />
+        <!-- 必须显式写 Hidden。ScrollViewer 自己的这两个属性默认是 **Visible**，而模板里是用
+             TemplateBinding 接到 TextBox 上的 —— 一旦没接上，内容宿主就真的画出一条滚动条，
+             把 18px 高的文字挤成 9px 可视，"输入了但看不见"就是这么来的。
+             多行框在自己的 XAML 里写 Auto，会覆盖这里。 -->
+        <Setter Property="VerticalScrollBarVisibility" Value="Hidden" />
+        <Setter Property="HorizontalScrollBarVisibility" Value="Hidden" />
+        <Setter Property="SelectionBrush" Value="{StaticResource FocusRing}" />
+        <Setter Property="SelectionOpacity" Value="0.3" />
+        <Setter Property="SnapsToDevicePixels" Value="True" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="TextBox">
+                    <Border x:Name="Chrome"
+                            Background="{TemplateBinding Background}"
+                            BorderBrush="{TemplateBinding BorderBrush}"
+                            BorderThickness="{TemplateBinding BorderThickness}"
+                            CornerRadius="6"
+                            SnapsToDevicePixels="True">
+                        <!--
+                            内边距必须落在 ScrollViewer 自己身上，**不能**落在外面这层 Border 上。
+
+                            放 Border 上时，内容宿主的可视高度会被再扣掉一份内边距：实测 36 高的框，
+                            内容宿主 19 高、可视却只有 5 —— 文字被裁成顶上一条，"输入了但看不见"
+                            就是这么来的。放 ScrollViewer 上，同样的框可视是 19，正好放下 18 高的一行。
+                        -->
+                        <ScrollViewer x:Name="PART_ContentHost"
+                                      Focusable="False"
+                                      Padding="{TemplateBinding Padding}"
+                                      HorizontalScrollBarVisibility="{TemplateBinding HorizontalScrollBarVisibility}"
+                                      VerticalScrollBarVisibility="{TemplateBinding VerticalScrollBarVisibility}" />
+                    </Border>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsMouseOver" Value="True">
+                            <Setter TargetName="Chrome" Property="Background" Value="{StaticResource FillHover}" />
+                        </Trigger>
+                        <Trigger Property="IsKeyboardFocusWithin" Value="True">
+                            <!-- 聚焦时才升起白底并给一圈柔和的绿边。平时不画边，整页就安静下来了。 -->
+                            <Setter TargetName="Chrome" Property="Background" Value="{StaticResource Surface}" />
+                            <Setter TargetName="Chrome" Property="BorderBrush" Value="{StaticResource AccentBorder}" />
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <Style x:Key="MonoTextBox" TargetType="TextBox" BasedOn="{StaticResource {x:Type TextBox}}">
+        <Setter Property="FontFamily" Value="{StaticResource MonoFont}" />
+        <Setter Property="FontSize" Value="12" />
+    </Style>
+
+    <!--
+        等宽的秘密输入框。做成一门单独的样式，而不是让 TextBox 那个样式套到 PasswordBox 上：
+        Style 的 TargetType 和元素类型不匹配时，**运行时**才炸，而且报的是"解析 XAML 出错"，
+        看不出真正的原因是 TargetType。这个错误被离线预览抓到过一次。
+    -->
+    <Style x:Key="MonoPasswordBox" TargetType="PasswordBox" BasedOn="{StaticResource {x:Type PasswordBox}}">
+        <Setter Property="FontFamily" Value="{StaticResource MonoFont}" />
+        <Setter Property="FontSize" Value="12" />
+    </Style>
+
+    <Style TargetType="PasswordBox">
+        <Setter Property="FontSize" Value="{StaticResource FontSizeBody}" />
+        <Setter Property="FontWeight" Value="Normal" />
+        <Setter Property="FontFamily" Value="{StaticResource UiFont}" />
+        <Setter Property="Background" Value="{StaticResource Fill}" />
+        <Setter Property="Foreground" Value="{StaticResource TextPrimary}" />
+        <Setter Property="BorderBrush" Value="Transparent" />
+        <Setter Property="BorderThickness" Value="1" />
+        <Setter Property="Padding" Value="10,5" />
+        <!-- 固定高度，不用 MinHeight。空文本框的期望高度被 WPF 算成了两行（实测 53px 对 17px 的字），
+             MinHeight 压不住它。写死高度还有额外好处：单行框在任何字体和缩放下都一样高。
+             AcceptsReturn 的多行框自己声明了 Height，会覆盖这里。 -->
+        <Setter Property="Height" Value="32" />
+        <Setter Property="CaretBrush" Value="{StaticResource TextPrimary}" />
+        <!-- 必须显式写 Hidden。ScrollViewer 自己的这两个属性默认是 **Visible**，而模板里是用
+             TemplateBinding 接到 TextBox 上的 —— 一旦没接上，内容宿主就真的画出一条滚动条，
+             把 18px 高的文字挤成 9px 可视，"输入了但看不见"就是这么来的。
+             多行框在自己的 XAML 里写 Auto，会覆盖这里。 -->
+        <Setter Property="SelectionOpacity" Value="0.3" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="PasswordBox">
+                    <Border x:Name="Chrome"
+                            Background="{TemplateBinding Background}"
+                            BorderBrush="{TemplateBinding BorderBrush}"
+                            BorderThickness="{TemplateBinding BorderThickness}"
+                            CornerRadius="6"
+                            SnapsToDevicePixels="True">
+                        <!-- 内边距同样放在 ScrollViewer 上，理由见 TextBox 模板。 -->
+                        <ScrollViewer x:Name="PART_ContentHost" Focusable="False"
+                                      Padding="{TemplateBinding Padding}"
+                                      VerticalScrollBarVisibility="Hidden"
+                                      HorizontalScrollBarVisibility="Hidden" />
+                    </Border>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsMouseOver" Value="True">
+                            <Setter TargetName="Chrome" Property="Background" Value="{StaticResource FillHover}" />
+                        </Trigger>
+                        <Trigger Property="IsKeyboardFocusWithin" Value="True">
+                            <!-- 聚焦时才升起白底并给一圈柔和的绿边。平时不画边，整页就安静下来了。 -->
+                            <Setter TargetName="Chrome" Property="Background" Value="{StaticResource Surface}" />
+                            <Setter TargetName="Chrome" Property="BorderBrush" Value="{StaticResource AccentBorder}" />
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <!-- ================================================================ 复选框 -->
+
+    <Style TargetType="CheckBox">
+        <Setter Property="FontSize" Value="{StaticResource FontSizeBody}" />
+        <Setter Property="FontWeight" Value="Normal" />
+        <Setter Property="FontFamily" Value="{StaticResource UiFont}" />
+        <Setter Property="Foreground" Value="{StaticResource TextPrimary}" />
+        <Setter Property="Cursor" Value="Hand" />
+        <Setter Property="VerticalContentAlignment" Value="Center" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="CheckBox"><ControlTemplate.Resources><Style TargetType="AccessText"><Setter Property="TextWrapping" Value="Wrap" /></Style></ControlTemplate.Resources>
+                    <Grid Background="Transparent"><Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                        <Border x:Name="Box" Width="16" Height="16" CornerRadius="4"
+                                Background="{StaticResource Surface}"
+                                BorderBrush="{StaticResource HairlineStrong}" BorderThickness="1"
+                                VerticalAlignment="Center" SnapsToDevicePixels="True">
+                            <Path x:Name="Tick" Data="M 0,4.1 L 3.2,7.2 L 8.2,1.3"
+                                  Stroke="{StaticResource TextOnInk}" StrokeThickness="1.4"
+                                  StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round"
+                                  HorizontalAlignment="Center" VerticalAlignment="Center" Visibility="Collapsed" />
+                        </Border>
+                        <ContentPresenter Grid.Column="1" Margin="9,0,0,0" VerticalAlignment="Center" RecognizesAccessKey="True" />
+                    </Grid>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsChecked" Value="True">
+                            <Setter TargetName="Box" Property="Background" Value="{StaticResource Accent}" />
+                            <Setter TargetName="Box" Property="BorderBrush" Value="{StaticResource Accent}" />
+                            <Setter TargetName="Tick" Property="Visibility" Value="Visible" />
+                        </Trigger>
+                        <MultiTrigger>
+                            <MultiTrigger.Conditions>
+                                <Condition Property="IsMouseOver" Value="True" />
+                                <Condition Property="IsChecked" Value="False" />
+                            </MultiTrigger.Conditions>
+                            <Setter TargetName="Box" Property="BorderBrush" Value="{StaticResource HairlineHover}" />
+                        </MultiTrigger>
+                        <Trigger Property="IsEnabled" Value="False">
+                            <Setter Property="Opacity" Value="0.45" />
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <!-- ================================================================ 下拉框 -->
+
+    <Style x:Key="ComboToggle" TargetType="ToggleButton">
+        <Setter Property="Focusable" Value="False" />
+        <Setter Property="ClickMode" Value="Press" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="ToggleButton">
+                    <Border x:Name="Chrome" Background="{StaticResource Fill}"
+                            BorderBrush="Transparent" BorderThickness="1" CornerRadius="6"
+                            SnapsToDevicePixels="True">
+                        <Path HorizontalAlignment="Right" VerticalAlignment="Center" Margin="0,0,11,0"
+                              Data="M 0,0 L 4,4 L 8,0"
+                              Stroke="{StaticResource TextTertiary}" StrokeThickness="1.4"
+                              StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round" />
+                    </Border>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsMouseOver" Value="True">
+                            <Setter TargetName="Chrome" Property="Background" Value="{StaticResource FillHover}" />
+                        </Trigger>
+                        <Trigger Property="IsChecked" Value="True">
+                            <Setter TargetName="Chrome" Property="Background" Value="{StaticResource Surface}" />
+                            <Setter TargetName="Chrome" Property="BorderBrush" Value="{StaticResource AccentBorder}" />
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <Style TargetType="ComboBoxItem">
+        <Setter Property="FontFamily" Value="{StaticResource UiFont}" />
+        <Setter Property="Foreground" Value="{StaticResource TextPrimary}" />
+        <Setter Property="Padding" Value="11,8" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="ComboBoxItem">
+                    <Border x:Name="Chrome" Background="Transparent" CornerRadius="6"
+                            Margin="4,1" Padding="{TemplateBinding Padding}">
+                        <ContentPresenter />
+                    </Border>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsHighlighted" Value="True">
+                            <Setter TargetName="Chrome" Property="Background" Value="{StaticResource FillHover}" />
+                        </Trigger>
+                        <Trigger Property="IsSelected" Value="True">
+                            <Setter TargetName="Chrome" Property="Background" Value="{StaticResource SelectionFill}" />
+                            <Setter Property="Foreground" Value="{StaticResource SelectionInk}" />
+                            <Setter Property="FontWeight" Value="Normal" />
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <Style TargetType="ComboBox">
+        <Setter Property="FontSize" Value="{StaticResource FontSizeBody}" />
+        <Setter Property="FontWeight" Value="Normal" />
+        <Setter Property="FontFamily" Value="{StaticResource UiFont}" />
+        <Setter Property="Foreground" Value="{StaticResource TextPrimary}" />
+        <Setter Property="Background" Value="{StaticResource Surface}" />
+        <Setter Property="BorderBrush" Value="{StaticResource HairlineStrong}" />
+        <Setter Property="Padding" Value="12,0,34,0" />
+        <Setter Property="MinHeight" Value="32" />
+        <Setter Property="SnapsToDevicePixels" Value="True" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="ComboBox">
+                    <Grid>
+                        <ToggleButton x:Name="Toggle" Style="{StaticResource ComboToggle}"
+                                      IsChecked="{Binding IsDropDownOpen, Mode=TwoWay,
+                                                  RelativeSource={RelativeSource TemplatedParent}}" />
+                        <ContentPresenter x:Name="Selection" Margin="{TemplateBinding Padding}"
+                                          VerticalAlignment="Center" IsHitTestVisible="False"
+                                          Content="{TemplateBinding SelectionBoxItem}"
+                                          ContentTemplate="{TemplateBinding SelectionBoxItemTemplate}"
+                                          ContentStringFormat="{TemplateBinding SelectionBoxItemStringFormat}" />
+
+                        <!--
+                            可编辑下拉框的输入区。
+
+                            这一段是必须的：**默认模板里没有它的话，IsEditable=True 的下拉框什么都显示不出来**
+                            —— 值和选中项都对，屏幕上就是一片空白（模型名那个框就是这么空着的）。
+                            模板自带一份最简单的 TextBox 模板，免得被隐式的 TextBox 样式套上第二层边框。
+
+                            右边留 34 是给箭头的，和 Selection 用同一份 Padding。
+                        -->
+                        <TextBox x:Name="PART_EditableTextBox" Visibility="Collapsed"
+                                 Margin="{TemplateBinding Padding}" Padding="0"
+                                 Background="Transparent" BorderThickness="0"
+                                 VerticalContentAlignment="Center"
+                                 Foreground="{TemplateBinding Foreground}"
+                                 FontFamily="{TemplateBinding FontFamily}"
+                                 FontSize="{TemplateBinding FontSize}"
+                                 TextOptions.TextFormattingMode="Display">
+                            <TextBox.Template>
+                                <ControlTemplate TargetType="TextBox">
+                                    <ScrollViewer x:Name="PART_ContentHost" VerticalAlignment="Center"
+                                                  Background="Transparent" Focusable="False"
+                                                  HorizontalScrollBarVisibility="Hidden"
+                                                  VerticalScrollBarVisibility="Hidden" />
+                                </ControlTemplate>
+                            </TextBox.Template>
+                        </TextBox>
+                        <Popup x:Name="PART_Popup" Placement="Bottom" AllowsTransparency="True"
+                               Focusable="False" PopupAnimation="Fade"
+                               IsOpen="{TemplateBinding IsDropDownOpen}">
+                            <Border Margin="0,4,0,0" Background="{StaticResource Surface}"
+                                    BorderBrush="{StaticResource Hairline}" BorderThickness="1" CornerRadius="10"
+                                    Padding="2"
+                                    MinWidth="{Binding ActualWidth, RelativeSource={RelativeSource TemplatedParent}}"
+                                    MaxHeight="{TemplateBinding MaxDropDownHeight}">
+                                <Border.Effect>
+                                    <DropShadowEffect BlurRadius="18" ShadowDepth="4" Direction="270"
+                                                      Opacity="0.10" Color="#202735" />
+                                </Border.Effect>
+                                <ScrollViewer VerticalScrollBarVisibility="Auto">
+                                    <ItemsPresenter />
+                                </ScrollViewer>
+                            </Border>
+                        </Popup>
+                    </Grid>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsEnabled" Value="False">
+                            <Setter TargetName="Toggle" Property="Opacity" Value="0.45" />
+                        </Trigger>
+                        <Trigger Property="IsEditable" Value="True">
+                            <Setter TargetName="Selection" Property="Visibility" Value="Collapsed" />
+                            <Setter TargetName="PART_EditableTextBox" Property="Visibility" Value="Visible" />
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <!-- ================================================================ 列表 -->
+
+    <Style TargetType="ListBox">
+        <Setter Property="FontSize" Value="{StaticResource FontSizeBody}" />
+        <Setter Property="FontWeight" Value="Normal" />
+        <Setter Property="FontFamily" Value="{StaticResource UiFont}" />
+        <Setter Property="Background" Value="Transparent" />
+        <Setter Property="BorderThickness" Value="0" />
+        <Setter Property="Padding" Value="0" />
+        <Setter Property="ScrollViewer.HorizontalScrollBarVisibility" Value="Auto" />
+    </Style>
+
+    <Style TargetType="ListBoxItem">
+        <Setter Property="FontFamily" Value="{StaticResource UiFont}" />
+        <Setter Property="Foreground" Value="{StaticResource TextPrimary}" />
+        <Setter Property="Padding" Value="11,8" />
+        <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="ListBoxItem">
+                    <Border x:Name="Chrome" Background="Transparent" CornerRadius="7" Margin="0,1"
+                            Padding="{TemplateBinding Padding}">
+                        <ContentPresenter HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"
+                                          VerticalAlignment="Center" />
+                    </Border>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsMouseOver" Value="True">
+                            <Setter TargetName="Chrome" Property="Background" Value="{StaticResource FillHover}" />
+                        </Trigger>
+                        <Trigger Property="IsSelected" Value="True">
+                            <Setter TargetName="Chrome" Property="Background" Value="{StaticResource SelectionFill}" />
+                            <Setter Property="Foreground" Value="{StaticResource SelectionInk}" />
+                            <Setter Property="FontWeight" Value="Normal" />
+                        </Trigger>
+                        <Trigger Property="IsEnabled" Value="False">
+                            <Setter Property="Opacity" Value="0.45" />
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <!-- ListViewItem 从 ListBoxItem 继承，但隐式样式是按确切类型查的，不会向上找 —— 所以得再写一份。 -->
+    <Style TargetType="ListViewItem">
+        <Setter Property="FontFamily" Value="{StaticResource UiFont}" />
+        <Setter Property="Foreground" Value="{StaticResource TextPrimary}" />
+        <Setter Property="Padding" Value="8,6" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="ListViewItem">
+                    <Border x:Name="Chrome" Background="Transparent" CornerRadius="7" Margin="0,1"
+                            Padding="{TemplateBinding Padding}">
+                        <ContentPresenter />
+                    </Border>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsMouseOver" Value="True">
+                            <Setter TargetName="Chrome" Property="Background" Value="{StaticResource FillHover}" />
+                        </Trigger>
+                        <Trigger Property="IsSelected" Value="True">
+                            <Setter TargetName="Chrome" Property="Background" Value="{StaticResource SelectionFill}" />
+                            <Setter Property="Foreground" Value="{StaticResource SelectionInk}" />
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <Style TargetType="ListView">
+        <Setter Property="FontSize" Value="{StaticResource FontSizeBody}" />
+        <Setter Property="FontWeight" Value="Normal" />
+        <Setter Property="FontFamily" Value="{StaticResource UiFont}" />
+        <Setter Property="Background" Value="Transparent" />
+        <Setter Property="BorderThickness" Value="0" />
+    </Style>
+
+    <Style TargetType="GridViewColumnHeader">
+        <Setter Property="FontFamily" Value="{StaticResource UiFont}" />
+        <Setter Property="Foreground" Value="{StaticResource TextTertiary}" />
+        <Setter Property="FontSize" Value="{StaticResource FontSizeSmall}" />
+        <Setter Property="FontWeight" Value="Normal" />
+        <Setter Property="HorizontalContentAlignment" Value="Left" />
+        <Setter Property="Padding" Value="10,8" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="GridViewColumnHeader">
+                    <Border Background="Transparent" Padding="{TemplateBinding Padding}"
+                            BorderBrush="{StaticResource Hairline}" BorderThickness="0,0,0,1">
+                        <ContentPresenter HorizontalAlignment="Left" VerticalAlignment="Center" />
+                    </Border>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <!-- ================================================================ 导航外壳 -->
+
+    <!--
+        左侧导航栏而不是顶部页签。参考的是 Claude / 飞书 那类桌面端：导航是一条独立的竖栏，字标在最上面，
+        当前页使用淡绿底和深绿字。
+
+        仍然用 TabControl 而不是换成 ListBox + 一堆面板，是因为代码里到处在用 Tabs.SelectedIndex /
+        SelectTab / SelectionChanged，而 TabControl 的内容托管本身就是"只实现选中那一页" ——
+        换掉它等于把这套行为重新实现一遍，只为换个长相。
+    -->
+    <Style TargetType="TabControl">
+        <Setter Property="FontFamily" Value="{StaticResource UiFont}" />
+        <Setter Property="TabStripPlacement" Value="Left" />
+        <Setter Property="Background" Value="{StaticResource Canvas}" />
+        <Setter Property="BorderThickness" Value="0" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="TabControl">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="228" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+
+                        <!-- 侧栏只比画布深一点点，一条发丝线分开。给它上色、加阴影都会立刻显得廉价。 -->
+                        <Border Grid.Column="0" Background="{StaticResource SidebarFill}"
+                                BorderBrush="{StaticResource Hairline}" BorderThickness="0,0,1,0">
+                            <DockPanel>
+                                <StackPanel DockPanel.Dock="Top" Orientation="Horizontal"
+                                            Margin="22,26,20,28">
+                                    <!-- 标记用形状画，不用图片：主题文件同时被 Agent 和安装向导 Link 进去，
+                                         相对路径的 pack URI 在两个程序集里指向不同的东西。 -->
+                                    <Border Width="28" Height="28" CornerRadius="8" Background="{StaticResource SelectionFill}"><Path Stroke="{StaticResource SelectionInk}" StrokeThickness="1.6" StrokeLineJoin="Round" Margin="2" Data="M 12,2 L 21,5 V 11 C 21,17 17,21 12,23 C 7,21 3,17 3,11 V 5 Z M 8,12 L 11,15 L 16,9" /></Border>
+                                    <TextBlock Text="Sentinel" Margin="10,0,0,0" VerticalAlignment="Center"
+                                               FontFamily="{StaticResource DisplayFont}"
+                                               FontSize="21" FontWeight="SemiBold" />
+                                </StackPanel>
+
+                                <TabPanel IsItemsHost="True" Margin="0,0,0,12" />
+                            </DockPanel>
+                        </Border>
+
+                        <Border Grid.Column="1" Background="{TemplateBinding Background}">
+                            <ContentPresenter ContentSource="SelectedContent" />
+                        </Border>
+                    </Grid>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <Style TargetType="TabItem">
+        <Setter Property="FontFamily" Value="{StaticResource UiFont}" />
+        <Setter Property="Cursor" Value="Hand" />
+        <!-- 固定宽度：TabPanel 是按内容的期望尺寸摆的，不写死的话导航项会一条条不一样长。 -->
+        <Setter Property="Width" Value="204" />
+        <Setter Property="Margin" Value="12,1" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="TabItem">
+                    <Border x:Name="Chrome" Background="Transparent" CornerRadius="8" Padding="12,11">
+                        <!-- 颜色只落在这一行上，不设 TabItem.Foreground：Foreground 会顺着逻辑树往下继承，
+                             一设整页的文字都会跟着变色 —— 表单标签集体变蓝就是这么来的。 -->
+                        <ContentPresenter x:Name="HeaderText" ContentSource="Header" VerticalAlignment="Center"
+                                          TextElement.FontSize="15" TextElement.Foreground="{StaticResource TextPrimary}" />
+                    </Border>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsMouseOver" Value="True">
+                            <Setter TargetName="Chrome" Property="Background" Value="{StaticResource SidebarHover}" />
+                            <Setter TargetName="HeaderText" Property="TextElement.Foreground" Value="{StaticResource TextPrimary}" />
+                        </Trigger>
+                        <Trigger Property="IsSelected" Value="True">
+                            <Setter TargetName="Chrome" Property="Background" Value="{StaticResource SelectionFill}" />
+
+                            <Setter TargetName="HeaderText" Property="TextElement.Foreground" Value="{StaticResource SelectionInk}" />
+                            <Setter TargetName="HeaderText" Property="TextElement.FontWeight" Value="SemiBold" />
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <!--
+        导航图标：细的单色线条，比文字还轻一档。参照的界面里图标从不和标签抢注意力。
+        Stretch 必须是 None —— 图形按 0..16 的绝对坐标画，拉伸会把它们糊在一起。
+    -->
+    <Style x:Key="NavIcon" TargetType="Path">
+        <Setter Property="Width" Value="16" />
+        <Setter Property="Height" Value="16" />
+        <Setter Property="Stretch" Value="None" />
+        <Setter Property="Fill" Value="Transparent" />
+        <Setter Property="Stroke" Value="{StaticResource TextTertiary}" />
+        <Setter Property="StrokeThickness" Value="1.35" />
+        <Setter Property="StrokeLineJoin" Value="Round" />
+        <Setter Property="StrokeStartLineCap" Value="Round" />
+        <Setter Property="StrokeEndLineCap" Value="Round" />
+        <Setter Property="VerticalAlignment" Value="Center" />
+        <Setter Property="Margin" Value="0,0,10,0" />
+    </Style>
+
+    <!-- ================================================================ 按钮上的小图标 -->
+
+    <!--
+        工具条和操作按钮上的图标。参照的界面里几乎没有"光秃秃只有字"的按钮 —— 一个加号比"新建"两个字
+        更快被认出来，而且让一排按钮看起来是一组而不是一列文字。
+
+        同样按 0..16 的绝对坐标画，Stretch 必须是 None。
+    -->
+    <Geometry x:Key="IconPlus">M 8,3.2 V 12.8 M 3.2,8 H 12.8</Geometry>
+    <Geometry x:Key="IconTrash">M 3.4,5 H 12.6 M 6.2,5 V 3.4 H 9.8 V 5 M 5,5 L 5.8,13.2 H 10.2 L 11,5</Geometry>
+    <Geometry x:Key="IconRefresh">M 12.9,8 A 4.9,4.9 0 1 1 9.5,3.3 M 9.5,0.7 V 3.7 H 6.5</Geometry>
+    <Geometry x:Key="IconFolder">M 2.2,12.4 V 4.2 H 6.3 L 7.7,6.2 H 13.8 V 12.4 Z</Geometry>
+    <Geometry x:Key="IconCheck">M 3.2,8.4 L 6.4,11.6 L 12.8,4.6</Geometry>
+    <Geometry x:Key="IconPlay">M 5.2,3.4 L 12.6,8 L 5.2,12.6 Z</Geometry>
+    <Geometry x:Key="IconPause">M 5.8,3.8 V 12.2 M 10.2,3.8 V 12.2</Geometry>
+    <Geometry x:Key="IconCopy">M 5.6,5.6 V 12.8 H 12.8 V 5.6 Z M 3.2,10.4 V 3.2 H 10.4</Geometry>
+    <Geometry x:Key="IconStop">M 4.4,4.4 H 11.6 V 11.6 H 4.4 Z</Geometry>
+    <Geometry x:Key="IconExternal">M 9.2,3 H 13 V 6.8 M 13,3 L 7.6,8.4 M 11.4,9.8 V 13 H 3 V 4.6 H 6.2</Geometry>
+    <Geometry x:Key="IconLock">M 3.9,7.3 H 12.1 V 13.5 H 3.9 Z M 6.1,7.3 V 5.3 A 1.95,1.95 0 0 1 9.9,5.3 V 7.3</Geometry>
+
+    <!-- 一支铅笔。服务商列表每一行的「编辑」。 -->
+    <Geometry x:Key="IconEdit">M 3.2,12.8 L 3.9,10.1 L 10.5,3.5 L 12.5,5.5 L 5.9,12.1 Z M 9.5,4.5 L 11.5,6.5</Geometry>
+
+    <!-- 一根左箭头。编辑页的「返回列表」。 -->
+    <Geometry x:Key="IconBack">M 7.4,3.4 L 2.8,8 L 7.4,12.6 M 2.8,8 H 13.4</Geometry>
+
+    <!--
+        一棵小草。用在空列表上。
+
+        空着的框不该只有一片白 —— 一个小图形加一句话，既说明"这里现在没东西"，也让页面有点生气。
+        这是全界面唯一一处纯装饰，所以选了最安静的那种：线条、单色、不抢任何注意力。
+    -->
+    <Geometry x:Key="IconSprout">M 12,21 V 11 M 12,15.5 C 9,15.5 6.5,13 6.5,10 C 9.5,10 12,12.5 12,15.5 M 12,13 C 15,13 17.5,10.5 17.5,7.5 C 14.5,7.5 12,10 12,13</Geometry>
+
+    <Style x:Key="EmptyMark" TargetType="Path">
+        <Setter Property="Width" Value="30" />
+        <Setter Property="Height" Value="30" />
+        <Setter Property="Stretch" Value="None" />
+        <Setter Property="Fill" Value="Transparent" />
+        <Setter Property="Stroke" Value="{StaticResource TextTertiary}" />
+        <Setter Property="StrokeThickness" Value="1.5" />
+        <Setter Property="StrokeLineJoin" Value="Round" />
+        <Setter Property="StrokeStartLineCap" Value="Round" />
+        <Setter Property="StrokeEndLineCap" Value="Round" />
+    </Style>
+
+    <Style x:Key="ButtonIcon" TargetType="Path">
+        <Setter Property="Width" Value="15" />
+        <Setter Property="Height" Value="15" />
+        <Setter Property="Stretch" Value="None" />
+        <Setter Property="Fill" Value="Transparent" />
+        <!-- 跟着按钮的文字颜色走，所以主按钮（近黑底白字）上的图标也是白的，不用为它另配一套。 -->
+        <Setter Property="Stroke"
+                Value="{Binding Foreground, RelativeSource={RelativeSource AncestorType={x:Type Button}}}" />
+        <Setter Property="StrokeThickness" Value="1.4" />
+        <Setter Property="StrokeLineJoin" Value="Round" />
+        <Setter Property="StrokeStartLineCap" Value="Round" />
+        <Setter Property="StrokeEndLineCap" Value="Round" />
+        <Setter Property="VerticalAlignment" Value="Center" />
+        <Setter Property="Margin" Value="0,0,7,0" />
+    </Style>
+
+    <!-- 带图标的按钮文字：VerticalAlignment 对齐图标的中线 -->
+    <Style x:Key="ButtonIconText" TargetType="TextBlock">
+        <Setter Property="FontFamily" Value="{StaticResource UiFont}" />
+        <Setter Property="VerticalAlignment" Value="Center" />
+    </Style>
+
+    <!--
+        带图标的按钮。图标走 Tag（`Tag="{StaticResource IconPlus}"`），文字还是 Content ——
+        这样每个按钮还是一行，不用为图标手搭一个 StackPanel。Tag 为空时图标自动收起。
+    -->
+    <ControlTemplate x:Key="IconButtonTemplate" TargetType="ButtonBase">
+        <Border x:Name="Chrome"
+                Background="{TemplateBinding Background}"
+                BorderBrush="{TemplateBinding BorderBrush}"
+                BorderThickness="{TemplateBinding BorderThickness}"
+                CornerRadius="6"
+                SnapsToDevicePixels="True">
+            <Grid>
+                <Border x:Name="Overlay" CornerRadius="6"
+                        Background="{StaticResource OverlayHover}" Opacity="0" IsHitTestVisible="False" />
+                <StackPanel Orientation="Horizontal" Margin="{TemplateBinding Padding}"
+                            HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"
+                            VerticalAlignment="Center">
+                    <Path x:Name="Glyph" Style="{StaticResource ButtonIcon}" Data="{TemplateBinding Tag}" />
+                    <ContentPresenter VerticalAlignment="Center" RecognizesAccessKey="True" />
+                </StackPanel>
+            </Grid>
+        </Border>
+        <ControlTemplate.Triggers>
+            <Trigger Property="IsMouseOver" Value="True">
+                <Setter TargetName="Overlay" Property="Opacity" Value="1" />
+            </Trigger>
+            <Trigger Property="IsPressed" Value="True">
+                <Setter TargetName="Overlay" Property="Background" Value="{StaticResource OverlayPressed}" />
+                <Setter TargetName="Overlay" Property="Opacity" Value="1" />
+            </Trigger>
+            <Trigger Property="IsEnabled" Value="False">
+                <Setter TargetName="Chrome" Property="Opacity" Value="0.4" />
+            </Trigger>
+            <Trigger Property="Tag" Value="{x:Null}">
+                <Setter TargetName="Glyph" Property="Visibility" Value="Collapsed" />
+            </Trigger>
+        </ControlTemplate.Triggers>
+    </ControlTemplate>
+
+    <Style x:Key="IconButton" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
+        <Setter Property="FontFamily" Value="{StaticResource UiFont}" />
+        <Setter Property="Template" Value="{StaticResource IconButtonTemplate}" />
+    </Style>
+
+    <Style x:Key="PrimaryIconButton" TargetType="Button" BasedOn="{StaticResource PrimaryButton}">
+        <Setter Property="FontFamily" Value="{StaticResource UiFont}" />
+        <Setter Property="Template" Value="{StaticResource IconButtonTemplate}" />
+    </Style>
+
+    <Style x:Key="ToolIconButton" TargetType="Button" BasedOn="{StaticResource ToolButton}">
+        <Setter Property="FontFamily" Value="{StaticResource UiFont}" />
+        <Setter Property="Template" Value="{StaticResource IconButtonTemplate}" />
+    </Style>
+
+    <Style x:Key="DangerIconButton" TargetType="Button" BasedOn="{StaticResource DangerButton}">
+        <Setter Property="FontFamily" Value="{StaticResource UiFont}" />
+        <Setter Property="Template" Value="{StaticResource IconButtonTemplate}" />
+    </Style>
+
+    <!--
+        数字输入框。默认的文本框给 36 高、通栏宽 —— 填 "300" 用不着那么大一个白方块，
+        一行里几个这种框会显得非常笨重。
+    -->
+    <Style x:Key="NumericBox" TargetType="TextBox" BasedOn="{StaticResource {x:Type TextBox}}">
+        <Setter Property="FontFamily" Value="{StaticResource UiFont}" />
+        <Setter Property="Width" Value="58" />
+        <Setter Property="Height" Value="32" />
+        <Setter Property="Padding" Value="8,4" />
+        <Setter Property="TextAlignment" Value="Center" />
+    </Style>
+
+    <!-- ================================================================ 滚动条 -->
+
+    <!-- 默认的 WPF 滚动条还停在 Aero 时代，而且很宽。这里做成一条细的、无箭头的条：
+         只留滑块，点空白处仍然翻页。 -->
+    <Style x:Key="ScrollPageButton" TargetType="RepeatButton">
+        <Setter Property="Focusable" Value="False" />
+        <Setter Property="IsTabStop" Value="False" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="RepeatButton">
+                    <!-- 透明而不是 null：null 的背景不参与命中测试，那样点击空白就不会翻页了。 -->
+                    <Border Background="Transparent" />
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <Style x:Key="ScrollThumb" TargetType="Thumb">
+        <Setter Property="OverridesDefaultStyle" Value="True" />
+        <Setter Property="IsTabStop" Value="False" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="Thumb">
+                    <Border x:Name="Bar" Background="{StaticResource ScrollThumbFill}" CornerRadius="2" Margin="2" />
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsMouseOver" Value="True">
+                            <Setter TargetName="Bar" Property="Background" Value="{StaticResource ScrollThumbFillHover}" />
+                        </Trigger>
+                        <Trigger Property="IsDragging" Value="True">
+                            <Setter TargetName="Bar" Property="Background" Value="{StaticResource ScrollThumbFillHover}" />
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <Style TargetType="ScrollBar">
+        <Setter Property="MinWidth" Value="0" />
+        <Setter Property="MinHeight" Value="0" />
+        <Setter Property="Background" Value="Transparent" />
+        <!-- 竖向必须给宽度：模板里只剩一个 Track，它会缩成 0 宽，滚动条就没法抓了。 -->
+        <Setter Property="Width" Value="8" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="ScrollBar">
+                    <Grid Background="Transparent">
+                        <Track x:Name="PART_Track" IsDirectionReversed="True">
+                            <Track.DecreaseRepeatButton>
+                                <RepeatButton Style="{StaticResource ScrollPageButton}"
+                                              Command="ScrollBar.PageUpCommand" />
+                            </Track.DecreaseRepeatButton>
+                            <Track.Thumb>
+                                <Thumb Style="{StaticResource ScrollThumb}" />
+                            </Track.Thumb>
+                            <Track.IncreaseRepeatButton>
+                                <RepeatButton Style="{StaticResource ScrollPageButton}"
+                                              Command="ScrollBar.PageDownCommand" />
+                            </Track.IncreaseRepeatButton>
+                        </Track>
+                    </Grid>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="Orientation" Value="Horizontal">
+                            <Setter Property="Width" Value="Auto" />
+                            <Setter Property="Height" Value="8" />
+                            <!-- Track.Orientation 默认是 Vertical，横向滚动条必须显式改掉它，
+                                 否则滑块按竖条摆，横向滚动等于坏的。 -->
+                            <Setter TargetName="PART_Track" Property="Orientation" Value="Horizontal" />
+                            <Setter TargetName="PART_Track" Property="IsDirectionReversed" Value="False" />
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <!-- Explicit viewport chrome avoids OS theme widths overriding the slim scrollbar style. -->
+    <Style TargetType="ScrollViewer">
+        <Setter Property="Background" Value="Transparent" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="ScrollViewer">
+                    <Grid Background="{TemplateBinding Background}">
+                        <Grid.ColumnDefinitions><ColumnDefinition /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                        <Grid.RowDefinitions><RowDefinition /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
+                        <ScrollContentPresenter x:Name="PART_ScrollContentPresenter"
+                            Content="{TemplateBinding Content}" ContentTemplate="{TemplateBinding ContentTemplate}"
+                            CanContentScroll="{TemplateBinding CanContentScroll}" Margin="{TemplateBinding Padding}" />
+                        <ScrollBar x:Name="PART_VerticalScrollBar" Grid.Column="1" Orientation="Vertical"
+                            Style="{StaticResource {x:Type ScrollBar}}" Width="8" Focusable="False"
+                            Maximum="{TemplateBinding ScrollableHeight}" ViewportSize="{TemplateBinding ViewportHeight}"
+                            Value="{Binding VerticalOffset, RelativeSource={RelativeSource TemplatedParent}, Mode=OneWay}"
+                            Visibility="{TemplateBinding ComputedVerticalScrollBarVisibility}" />
+                        <ScrollBar x:Name="PART_HorizontalScrollBar" Grid.Row="1" Orientation="Horizontal"
+                            Style="{StaticResource {x:Type ScrollBar}}" Width="Auto" Height="8" Focusable="False"
+                            Maximum="{TemplateBinding ScrollableWidth}" ViewportSize="{TemplateBinding ViewportWidth}"
+                            Value="{Binding HorizontalOffset, RelativeSource={RelativeSource TemplatedParent}, Mode=OneWay}"
+                            Visibility="{TemplateBinding ComputedHorizontalScrollBarVisibility}" />
+                    </Grid>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+    <!-- ================================================================ 折叠面板 -->
+
+    <Style TargetType="Expander">
+        <Setter Property="FontFamily" Value="{StaticResource UiFont}" />
+        <Setter Property="Foreground" Value="{StaticResource TextPrimary}" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="Expander">
+                    <StackPanel>
+                        <ToggleButton x:Name="Header" Focusable="False" Cursor="Hand"
+                                      Content="{TemplateBinding Header}"
+                                      ContentTemplate="{TemplateBinding HeaderTemplate}"
+                                      IsChecked="{Binding IsExpanded, Mode=TwoWay,
+                                                  RelativeSource={RelativeSource TemplatedParent}}">
+                            <ToggleButton.Template>
+                                <ControlTemplate TargetType="ToggleButton">
+                                    <Border Background="Transparent" Padding="0,7">
+                                        <StackPanel Orientation="Horizontal">
+                                            <Path x:Name="Chevron" Data="M 0,0 L 3.6,3.6 L 0,7.2"
+                                                  Stroke="{StaticResource TextTertiary}" StrokeThickness="1.4"
+                                                  StrokeStartLineCap="Round" StrokeEndLineCap="Round"
+                                                  StrokeLineJoin="Round"
+                                                  VerticalAlignment="Center" Margin="0,0,10,0"
+                                                  RenderTransformOrigin="0.5,0.5">
+                                                <Path.RenderTransform>
+                                                    <RotateTransform Angle="0" />
+                                                </Path.RenderTransform>
+                                            </Path>
+                                            <ContentPresenter VerticalAlignment="Center"
+                                                              TextElement.Foreground="{StaticResource TextSecondary}" />
+                                        </StackPanel>
+                                    </Border>
+                                    <ControlTemplate.Triggers>
+                                        <!-- 转的是 Path 本身，不是那个 RotateTransform：变换对象上的 x:Name
+                                             不进模板的名字表，触发器指不到它。 -->
+                                        <Trigger Property="IsChecked" Value="True">
+                                            <Setter TargetName="Chevron" Property="RenderTransform">
+                                                <Setter.Value>
+                                                    <RotateTransform Angle="90" />
+                                                </Setter.Value>
+                                            </Setter>
+                                        </Trigger>
+                                        <Trigger Property="IsMouseOver" Value="True">
+                                            <Setter TargetName="Chevron" Property="Stroke" Value="{StaticResource TextSecondary}" />
+                                        </Trigger>
+                                    </ControlTemplate.Triggers>
+                                </ControlTemplate>
+                            </ToggleButton.Template>
+                        </ToggleButton>
+                        <ContentPresenter x:Name="Body" />
+                    </StackPanel>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsExpanded" Value="False">
+                            <Setter TargetName="Body" Property="Visibility" Value="Collapsed" />
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <!-- ================================================================ 杂项 -->
+
+    <Style TargetType="ToolTip">
+        <Setter Property="Foreground" Value="{StaticResource TextOnInk}" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="ToolTip">
+                    <Border Background="{StaticResource Ink}" CornerRadius="7" Padding="9,5">
+                        <ContentPresenter />
+                    </Border>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <!-- 虚线分隔。一条实线像"划掉"，一条点线像"分开"，也让整页不至于只有直线。 -->
+    <DrawingBrush x:Key="SeparatorDots" TileMode="Tile" ViewportUnits="Absolute" Stretch="Fill"
+                  Viewport="0,0,7,2">
+        <DrawingBrush.Drawing>
+            <GeometryDrawing Brush="#D9DDE5">
+                <GeometryDrawing.Geometry>
+                    <EllipseGeometry Center="1.5,1" RadiusX="1.5" RadiusY="1" />
+                </GeometryDrawing.Geometry>
+            </GeometryDrawing>
+        </DrawingBrush.Drawing>
+    </DrawingBrush>
+
+    <!-- Restrained grey-green ornament: two 12px window bands, with no canvas pattern. -->
+    <DrawingBrush x:Key="KnotBand" TileMode="Tile" ViewportUnits="Absolute" Stretch="Fill"
+                  Viewport="0,0,24,12">
+        <DrawingBrush.Drawing>
+            <DrawingGroup>
+                <GeometryDrawing Brush="#F5F7F6">
+                    <GeometryDrawing.Geometry>
+                        <RectangleGeometry Rect="0,0,24,12" />
+                    </GeometryDrawing.Geometry>
+                </GeometryDrawing>
+                <GeometryDrawing Geometry="M 0,8 H 5 V 3 H 17 V 8 H 24">
+                    <GeometryDrawing.Pen>
+                        <Pen Brush="#9CB5A9" Thickness="1" LineJoin="Round"
+                             StartLineCap="Round" EndLineCap="Round" />
+                    </GeometryDrawing.Pen>
+                </GeometryDrawing>
+            </DrawingGroup>
+        </DrawingBrush.Drawing>
+    </DrawingBrush>
+
+    <Style TargetType="Separator">
+        <Setter Property="Margin" Value="0,10" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="Separator">
+                    <Border Height="1" Background="{StaticResource Hairline}" />
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <Style TargetType="StatusBar">
+        <Setter Property="FontFamily" Value="{StaticResource UiFont}" />
+        <!-- A white footer separates persistent status from the page canvas. -->
+        <Setter Property="Background" Value="{StaticResource Surface}" />
+        <Setter Property="Foreground" Value="{StaticResource TextTertiary}" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="StatusBar">
+                    <Border Background="{TemplateBinding Background}"
+                            BorderBrush="{StaticResource Hairline}" BorderThickness="0,1,0,0"
+                            Padding="16,8">
+                        <ItemsPresenter />
+                    </Border>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <Style TargetType="StatusBarItem">
+        <Setter Property="FontFamily" Value="{StaticResource UiFont}" />
+        <Setter Property="Padding" Value="0" />
+        <Setter Property="FontSize" Value="{StaticResource FontSizeSmall}" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="StatusBarItem">
+                    <ContentPresenter Margin="{TemplateBinding Padding}" VerticalAlignment="Center" />
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <!-- StatusBar 里的 Separator 要竖着，用默认那条横向的会变成一道横线撑满整条状态栏。 -->
+    <Style x:Key="StatusBarSeparator" TargetType="Separator">
+        <Setter Property="Background" Value="{StaticResource HairlineStrong}" />
+        <Setter Property="Width" Value="1" />
+        <Setter Property="Height" Value="12" />
+        <Setter Property="Margin" Value="12,0" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="Separator">
+                    <Border Width="1" Background="{TemplateBinding Background}" />
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <!-- 分段控件（安装向导、设置里的二选一） -->
+    <Style x:Key="SegmentToggle" TargetType="RadioButton">
+        <Setter Property="FontFamily" Value="{StaticResource UiFont}" />
+        <Setter Property="Cursor" Value="Hand" />
+        <Setter Property="Foreground" Value="{StaticResource TextSecondary}" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="RadioButton">
+                    <Border x:Name="Chrome" Background="Transparent" CornerRadius="7" Padding="16,7">
+                        <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
+                    </Border>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsMouseOver" Value="True">
+                            <Setter TargetName="Chrome" Property="Background" Value="{StaticResource FillHover}" />
+                        </Trigger>
+                        <Trigger Property="IsChecked" Value="True">
+                            <Setter TargetName="Chrome" Property="Background" Value="{StaticResource Surface}" />
+                            <Setter Property="Foreground" Value="{StaticResource TextPrimary}" />
+                            <Setter Property="FontWeight" Value="SemiBold" />
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <Style x:Key="SegmentHost" TargetType="Border">
+        <Setter Property="Background" Value="{StaticResource Fill}" />
+        <Setter Property="CornerRadius" Value="8" />
+        <Setter Property="Padding" Value="3" />
+    </Style>
+
+    <!-- 进度条：安装向导用 -->
+    <Style TargetType="ProgressBar">
+        <Setter Property="Height" Value="4" />
+        <Setter Property="Foreground" Value="{StaticResource Ink}" />
+        <Setter Property="Background" Value="{StaticResource Fill}" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="ProgressBar">
+                    <Border Background="{TemplateBinding Background}" CornerRadius="2">
+                        <Grid ClipToBounds="True">
+                            <Border x:Name="PART_Track" />
+                            <Border x:Name="PART_Indicator" Background="{TemplateBinding Foreground}"
+                                    CornerRadius="2" HorizontalAlignment="Left" />
+                        </Grid>
+                    </Border>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+</ResourceDictionary>

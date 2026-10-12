@@ -1,0 +1,331 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sentinel 解锁码签名</title>
+<style>
+  :root { color-scheme: light dark; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0 auto; padding: 20px 16px 60px; max-width: 760px;
+    font: 15px/1.6 system-ui, -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+  }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  p.lead { margin: 0 0 18px; color: #666; }
+  .note {
+    background: #f2f6fb; border: 1px solid #d5e0ee; border-radius: 6px;
+    padding: 10px 12px; margin: 0 0 20px; color: #345; font-size: 14px;
+  }
+  h2 { font-size: 15px; margin: 24px 0 6px; }
+  .hint { color: #666; font-size: 14px; margin: 0 0 8px; }
+  textarea {
+    width: 100%; font-family: ui-monospace, Consolas, monospace; font-size: 13px;
+    padding: 10px; border: 1px solid #bbb; border-radius: 6px; resize: vertical;
+  }
+  #key { min-height: 120px; }
+  #code { min-height: 88px; }
+  button {
+    font: inherit; padding: 10px 18px; border-radius: 6px; border: 1px solid #888;
+    background: #f7f7f7; cursor: pointer; margin: 10px 8px 0 0;
+  }
+  button.primary { background: #2f6fd0; border-color: #2f6fd0; color: #fff; font-weight: 600; }
+  button:disabled { opacity: .5; cursor: not-allowed; }
+  .row { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; margin-top: 10px; }
+  label.remember { color: #666; font-size: 14px; }
+  #result { margin-top: 8px; display: none; }
+  #result.shown { display: block; }
+  .facts { background: #f6f6f6; border-radius: 6px; padding: 10px 12px; font-size: 14px; }
+  .facts div { margin: 3px 0; }
+  .facts b { font-weight: 600; }
+  #token {
+    width: 100%; font-family: ui-monospace, Consolas, monospace; font-size: 13px;
+    padding: 10px; border: 1px solid #bbb; border-radius: 6px; min-height: 96px;
+    word-break: break-all; background: #fff;
+  }
+  .err { color: #b3261e; }
+  .ok { color: #1a7f37; }
+  footer { margin-top: 34px; color: #777; font-size: 13px; }
+  footer ul { margin: 8px 0 14px; padding-left: 22px; }
+  footer li { margin: 5px 0; line-height: 1.55; }
+  code { background: #eee; padding: 1px 5px; border-radius: 4px; }
+</style>
+</head>
+<body>
+
+<h1>Sentinel 解锁码签名</h1>
+<p class="lead">私钥 + 解锁码 → 令牌。这是每次想放宽限制都要走的一步。</p>
+
+<div class="note">
+  <b>这个页面不联网。</b>它是一个单独的本地文件，没有任何网络请求 —— 私钥和令牌都只在你的浏览器里。
+  你可以断网之后再打开它来确认这一点。
+</div>
+
+<p class="hint">
+  公钥和私钥是在 <code>sentinel-keygen.html</code> 里生成的那一对。
+  <b>只要你已经有密钥对了，就只需要这一个页面。</b>
+</p>
+
+<h2>1. 私钥</h2>
+<p class="hint">从手机保险箱里取出 <code>unlock-private.pem</code>，把内容粘在这里。</p>
+<textarea id="key" placeholder="-----BEGIN PRIVATE KEY-----&#10;…" spellcheck="false"></textarea>
+<div class="row">
+  <input type="file" id="keyfile" accept=".pem,.txt,text/plain">
+  <label class="remember"><input type="checkbox" id="remember"> 把私钥记在这个浏览器里（下次不用再粘）</label>
+</div>
+
+<h2>2. 解锁码</h2>
+<p class="hint">Sentinel 弹出的那串，以 <code>REQ1.</code> 开头。</p>
+<textarea id="code" placeholder="REQ1.…" spellcheck="false"></textarea>
+
+<div class="row">
+  <button class="primary" id="sign">签名，得到令牌</button>
+  <button id="clear">清空</button>
+</div>
+
+<div id="status" style="margin-top:12px"></div>
+
+<div id="result">
+  <h2>3. 令牌</h2>
+  <div class="facts" id="facts"></div>
+  <p class="hint" style="margin-top:12px">把下面这一整串贴回 Sentinel 的「令牌」框。</p>
+  <div id="token"></div>
+  <div class="row">
+    <button class="primary" id="copy">复制令牌</button>
+  </div>
+</div>
+
+<footer>
+  <b>用完要删的东西</b>
+  <ul>
+    <li>
+      <b>私钥文件</b>（<code>unlock-private.pem</code>）—— 它只该待在手机保险箱里。
+      如果你是把它从保险箱取出来放到这台设备上用的，用完就把取出来的那一份删掉。
+    </li>
+    <li>在页面上按一次<b>「清空」</b> —— 粘贴框里和浏览器里记住的那份都会被抹掉。</li>
+  </ul>
+  令牌本身不用删：它只对应你签的那一次具体改动，而且只能生效一次。
+</footer>
+
+<script>
+"use strict";
+
+// ------------------------------------------------------------------ 编码
+
+const b64urlToBytes = (text) => {
+  let s = text.replace(/-/g, "+").replace(/_/g, "/");
+  while (s.length % 4) s += "=";
+  const bin = atob(s);
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+};
+
+const bytesToB64url = (bytes) => {
+  let bin = "";
+  for (const b of bytes) bin += String.fromCharCode(b);
+  return btoa(bin).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+};
+
+const concat = (...parts) => {
+  const total = parts.reduce((n, p) => n + p.length, 0);
+  const out = new Uint8Array(total);
+  let at = 0;
+  for (const p of parts) { out.set(p, at); at += p.length; }
+  return out;
+};
+
+// ------------------------------------------------------------------ PEM
+
+function pemToDer(pem) {
+  const body = pem
+    .replace(/-----BEGIN [^-]+-----/, "")
+    .replace(/-----END [^-]+-----/, "")
+    .replace(/\s+/g, "");
+
+  if (!body) throw new Error("这里没有看起来像 PEM 的内容。");
+  return b64urlToBytes(body);
+}
+
+// 密钥对可能有两种写法：生成页导出的是 PKCS#8，而 .NET 的 ExportRSAPrivateKeyPem 给的是
+// PKCS#1（"BEGIN RSA PRIVATE KEY"）。WebCrypto 只认 PKCS#8，所以 PKCS#1 要在这里套上外层信封，
+// 里面的字节一个都不动。
+//
+//   PrivateKeyInfo ::= SEQUENCE {
+//     version             INTEGER 0,
+//     privateKeyAlgorithm AlgorithmIdentifier (rsaEncryption, NULL),
+//     privateKey          OCTET STRING   -- the PKCS#1 body
+//   }
+
+const derLength = (n) => {
+  if (n < 0x80) return new Uint8Array([n]);
+  const bytes = [];
+  while (n > 0) { bytes.unshift(n & 0xff); n >>>= 8; }
+  return new Uint8Array([0x80 | bytes.length, ...bytes]);
+};
+
+const derTag = (tag, content) => concat(new Uint8Array([tag]), derLength(content.length), content);
+
+const RSA_ALGORITHM_ID = new Uint8Array([
+  0x30, 0x0d,                               // SEQUENCE, 13 bytes
+  0x06, 0x09, 0x2a, 0x86, 0x48, 0x86, 0xf7, 0x0d, 0x01, 0x01, 0x01,  // OID 1.2.840.113549.1.1.1
+  0x05, 0x00,                               // NULL
+]);
+
+const PKCS8_VERSION = new Uint8Array([0x02, 0x01, 0x00]);   // INTEGER 0
+
+function toPkcs8(der, pemText) {
+  if (pemText.includes("BEGIN RSA PRIVATE KEY"))
+    return derTag(0x30, concat(PKCS8_VERSION, RSA_ALGORITHM_ID, derTag(0x04, der)));
+
+  return der;   // already PKCS#8
+}
+
+// ------------------------------------------------------------------ 解锁码
+
+function readRequest(text) {
+  const trimmed = text.trim();
+  if (!trimmed) throw new Error("还没有粘解锁码。");
+
+  const parts = trimmed.split(".");
+  if (parts.length !== 2 || parts[0] !== "REQ1")
+    throw new Error("这看起来不是解锁码 —— 它应该以 REQ1. 开头。");
+
+  const payload = new TextDecoder().decode(b64urlToBytes(parts[1]));
+  const fields = payload.split("\n");
+
+  if (fields.length !== 5 || fields[0] !== "sentinel-unlock")
+    throw new Error("解锁码的内容看不懂。");
+
+  const expires = new Date(fields[3]);
+  if (isNaN(expires))
+    throw new Error("解锁码里的有效期看不懂。");
+
+  if (expires.getTime() < Date.now())
+    throw new Error("这份解锁码已经过期了（" + expires.toLocaleString() + "）。回 Sentinel 重新要一份。");
+
+  return { payload, digest: fields[2], expires, nonce: fields[4] };
+}
+
+// ------------------------------------------------------------------ 签名
+
+async function sign(privatePem, payload) {
+  const der = toPkcs8(pemToDer(privatePem), privatePem);
+
+  let key;
+  try {
+    // The name here is "RSA-PSS", not the "RSASSA-PSS" that appears in key-format and JOSE
+    // documents. They are the same algorithm and only one of the two is accepted here.
+    key = await crypto.subtle.importKey(
+      "pkcs8", der, { name: "RSA-PSS", hash: "SHA-256" }, false, ["sign"]);
+  } catch {
+    throw new Error("私钥读不了 —— 确认粘的是 unlock-private.pem 的内容，不是公钥。");
+  }
+
+  // saltLength matches what .NET's RSASignaturePadding.Pss uses (the hash length). Anything else
+  // produces a signature the Service will reject as invalid, with nothing to say why.
+  const signature = await crypto.subtle.sign(
+    { name: "RSA-PSS", saltLength: 32 }, key, new TextEncoder().encode(payload));
+
+  return "TOK1." + bytesToB64url(new TextEncoder().encode(payload)) + "." + bytesToB64url(new Uint8Array(signature));
+}
+
+// ------------------------------------------------------------------ 界面
+
+const $ = (id) => document.getElementById(id);
+const STORE = "sentinel-sign-private";
+
+function setStatus(message, kind) {
+  const el = $("status");
+  el.textContent = message || "";
+  el.className = kind || "";
+}
+
+async function doSign() {
+  setStatus("");
+  $("result").classList.remove("shown");
+
+  try {
+    const request = readRequest($("code").value);
+    const pem = $("key").value.trim();
+    if (!pem) throw new Error("还没有粘私钥。");
+
+    $("sign").disabled = true;
+    const token = await sign(pem, request.payload);
+
+    if ($("remember").checked) {
+      try { localStorage.setItem(STORE, pem); } catch { /* private mode, or storage full */ }
+    } else {
+      try { localStorage.removeItem(STORE); } catch { }
+    }
+
+    $("facts").innerHTML = "";
+    const add = (label, value) => {
+      const row = document.createElement("div");
+      const b = document.createElement("b");
+      b.textContent = label + "：";
+      row.appendChild(b);
+      row.appendChild(document.createTextNode(value));
+      $("facts").appendChild(row);
+    };
+
+    add("有效期至", request.expires.toLocaleString());
+    add("配置指纹", request.digest);
+    add("随机号", request.nonce);
+
+    $("token").textContent = token;
+    $("result").classList.add("shown");
+    setStatus("签好了。", "ok");
+  } catch (ex) {
+    setStatus(ex.message, "err");
+  } finally {
+    $("sign").disabled = false;
+  }
+}
+
+$("sign").addEventListener("click", doSign);
+
+$("copy").addEventListener("click", async () => {
+  const text = $("token").textContent;
+  try {
+    await navigator.clipboard.writeText(text);
+    setStatus("令牌已复制。", "ok");
+  } catch {
+    // Clipboard access is refused in some contexts; selecting it lets the user copy by hand.
+    const range = document.createRange();
+    range.selectNodeContents($("token"));
+    const selection = getSelection();
+    selection.removeAllRanges();
+    selection.addRange(range);
+    setStatus("自动复制失败了 —— 已经帮你选中，按 Ctrl+C（手机上长按）复制。", "");
+  }
+});
+
+$("clear").addEventListener("click", () => {
+  $("key").value = "";
+  $("code").value = "";
+  $("token").textContent = "";
+  $("remember").checked = false;
+  try { localStorage.removeItem(STORE); } catch { }
+  $("result").classList.remove("shown");
+  setStatus("已清空。", "");
+});
+
+$("keyfile").addEventListener("change", async (event) => {
+  const file = event.target.files && event.target.files[0];
+  if (!file) return;
+
+  $("key").value = await file.text();
+  setStatus("已读入 " + file.name + "。", "ok");
+});
+
+// Restoring is opt-in and off by default: the habit this page is meant to support is fetching the
+// key, using it, and putting it away again.
+try {
+  const stored = localStorage.getItem(STORE);
+  if (stored) { $("key").value = stored; $("remember").checked = true; }
+} catch { }
+</script>
+
+</body>
+</html>

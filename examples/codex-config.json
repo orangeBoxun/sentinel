@@ -1,0 +1,59 @@
+{
+  "Version": 1,
+  "Targets": [
+    {
+      "Id": "codex-desktop",
+      "DisplayName": "Codex 桌面版",
+      "ProcessNames": ["ChatGPT"],
+      "Enabled": true,
+      "Reader": {
+        "ScanUrl": true,
+        "ScanTitle": true,
+        "ScanBody": true,
+        "IntervalMs": 5000,
+        "MaxBodyChars": 20000
+      },
+      "Rules": [
+        {
+          "Id": "r-body-block",
+          "Name": "正文含「锁机」",
+          "Enabled": true,
+          "PolicyId": "notify-only",
+          "Priority": 10,
+          "Match": {
+            "Type": "Keyword",
+            "Fields": ["Body", "Title"],
+            "Patterns": ["锁机"],
+            "CaseSensitive": false
+          }
+        }
+      ]
+    }
+  ],
+  "Policies": [
+    {
+      "Id": "notify-only",
+      "Name": "通知 3 秒后最小化",
+      "Actions": ["Notify", "Minimize"],
+      "GraceSeconds": 3,
+      "CooldownSeconds": 60,
+      "DebounceCount": 1
+    }
+  ],
+  "Schedules": [],
+  "Protection": {
+    "Enabled": false,
+    "Mode": "None",
+    "SecretHash": null,
+    "DelaySeconds": 0
+  },
+  "Logging": {
+    "LogDirectory": "%TEMP%\\Sentinel\\logs",
+    "LogBodyText": false,
+    "LogUrlHash": true
+  },
+  "Ui": {
+    "Locale": "zh-CN",
+    "DryRun": true
+  }
+}

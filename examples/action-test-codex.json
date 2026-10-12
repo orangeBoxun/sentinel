@@ -1,0 +1,41 @@
+{
+  "Version": 1,
+  "Targets": [
+    {
+      "Id": "action-test",
+      "DisplayName": "动作测试靶子",
+      "ProcessNames": ["ChatGPT"],
+      "Enabled": true,
+      "Reader": { "ScanUrl": true, "ScanTitle": true, "ScanBody": false, "IntervalMs": 1000, "MaxBodyChars": 4096 },
+      "Rules": [
+        {
+          "Id": "r-always",
+          "Name": "正则 .+ 匹配标题（必然命中）",
+          "Enabled": true,
+          "PolicyId": "p-neutralize",
+          "Priority": 10,
+          "Match": {
+            "Type": "Regex",
+            "Fields": ["Title"],
+            "Patterns": [".+"],
+            "CaseSensitive": false
+          }
+        }
+      ]
+    }
+  ],
+  "Policies": [
+    {
+      "Id": "p-neutralize",
+      "Name": "通知 3 秒后最小化",
+      "Actions": ["Notify", "Minimize"],
+      "GraceSeconds": 3,
+      "CooldownSeconds": 60,
+      "DebounceCount": 1
+    }
+  ],
+  "Schedules": [],
+  "Protection": { "Enabled": false, "Mode": "None", "SecretHash": null, "DelaySeconds": 0 },
+  "Logging": { "LogDirectory": "%TEMP%\\Sentinel\\logs", "LogBodyText": false, "LogUrlHash": true },
+  "Ui": { "Locale": "zh-CN", "DryRun": false }
+}

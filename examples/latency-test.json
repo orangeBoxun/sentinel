@@ -1,0 +1,36 @@
+{
+  "Version": 1,
+  "Targets": [
+    {
+      "Id": "latency-edge",
+      "DisplayName": "Edge 时效测试",
+      "ProcessNames": ["msedge"],
+      "Enabled": true,
+      "Reader": { "ScanUrl": true, "ScanTitle": true, "ScanBody": false, "IntervalMs": 0, "MaxBodyChars": 4096 },
+      "Rules": [
+        {
+          "Id": "r-target",
+          "Name": "URL 含 noobdream",
+          "Enabled": true,
+          "PolicyId": "p-log-only",
+          "Priority": 10,
+          "Match": { "Type": "Keyword", "Fields": ["Url"], "Patterns": ["noobdream"], "CaseSensitive": false }
+        }
+      ]
+    }
+  ],
+  "Policies": [
+    {
+      "Id": "p-log-only",
+      "Name": "只记录（用于量时效）",
+      "Actions": ["Log"],
+      "GraceSeconds": 0,
+      "CooldownSeconds": 0,
+      "DebounceCount": 1
+    }
+  ],
+  "Schedules": [],
+  "Protection": { "Enabled": false, "Mode": "None", "SecretHash": null, "DelaySeconds": 0 },
+  "Logging": { "LogDirectory": "%TEMP%\\Sentinel\\logs", "LogBodyText": false, "LogUrlHash": false },
+  "Ui": { "Locale": "zh-CN", "DryRun": true }
+}

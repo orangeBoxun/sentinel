@@ -1,0 +1,234 @@
+using System.IO;
+using System.Windows;
+using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
+using System.Windows.Threading;
+using Sentinel.Agent;
+using Sentinel.Core.Config;
+using Sentinel.Core.Models;
+
+namespace Sentinel.Preview;
+
+/// <summary>
+/// 「大语言模型」这一页整条路走一遍：添加服务商 → 编辑页填东西 → 取模型列表 → 保存 → 回到列表。
+///
+/// <para>
+/// 起因是这一页被整个重做过（照 cc-switch 那套排版）。重做之后光看截图只能看出"排得下"，看不出
+/// "填进去的东西还在不在"—— 可编辑下拉框会把 Text 悄悄抹掉、保存之后行上的徽章会不会跟着变，
+/// 这些都是截图上看不出来、点一遍才知道的事。
+/// </para>
+/// <para>
+/// 不启服务：Agent 找不到服务时会直接写文件，正好用来单独看"界面 → 配置"这一段。
+/// 管道名和配置文件都隔离，绝不碰用户装好的那一套。
+/// </para>
+/// </summary>
+internal static class ModelCheck
+{
+    public static int Run(string workDir)
+    {
+        Environment.SetEnvironmentVariable("SENTINEL_PIPE", "Sentinel.Test.ModelCheck.Unused");
+
+        Directory.CreateDirectory(workDir);
+        var configPath = Path.Combine(workDir, "config.json");
+        WriteConfig(configPath);
+
+        using var state = new AgentState(new[] { "--config", configPath });
+
+        if (state.Config.Models.Count != 1 || state.Config.Models[0].Id != "m1")
+        {
+            Console.WriteLine("读到的不是本检查自己写的配置 —— 可能连上了别的服务，停手。");
+            return 1;
+        }
+
+        var window = new MainWindow(state)
+        {
+            WindowStartupLocation = WindowStartupLocation.Manual,
+            Left = -20000,
+            Top = -20000,
+            ShowInTaskbar = false,
+            ShowActivated = false,
+            Width = 1180,
+            Height = 800,
+        };
+
+        window.Show();
+        Pump();
+        window.SelectTab(6);
+        Pump();
+
+        var ok = true;
+
+        // ---- 一、列表页：已有的那个服务商应该就在上面，并且标着"使用中"
+        var list = (ItemsControl)window.FindName("ModelList")!;
+        var rows = ItemsOf(list).ToList();
+        Console.WriteLine($"列表里 {rows.Count} 行：{string.Join(" / ", rows.Select(Describe))}");
+        ok &= rows.Count == 1 && rows[0].IsActive;
+
+        // ---- 二、点「添加服务商」→ 应该切到编辑页
+        Click(window, "添加服务商");
+        Pump();
+
+        var editor = (FrameworkElement)window.FindName("ModelEditView")!;
+        var listView = (FrameworkElement)window.FindName("ModelListView")!;
+        Console.WriteLine($"点过「添加服务商」: 编辑页={editor.Visibility}  列表页={listView.Visibility}");
+        ok &= editor.Visibility == Visibility.Visible && listView.Visibility == Visibility.Collapsed;
+
+        // ---- 三、填进去，然后用「获取模型列表」试一次网络。
+        //         这里故意填一个不存在的中转站：要验的是**取不到的时候说清楚了没有**，
+        //         而不是真去调谁家的接口（那要花用户的钱，也说明不了界面的事）。
+        SetText(window, "ModelNameBox", "示例中转");
+        SetText(window, "ModelNoteBox", "自己看的备注");
+        SetText(window, "ModelEndpointBox", "https://nothing.invalid/v1/chat/completions");
+        SetText(window, "ModelCodePicker", "some-model");
+        Pump();
+
+        var listUrl = (TextBox)window.FindName("ModelListEndpointBox")!;
+        Console.WriteLine($"模型列表地址自动带出: 「{listUrl.Text}」");
+        ok &= listUrl.Text.Length > 0;
+
+        // 地址和格式对不上（这里的格式是 OpenAI，地址却是 Anthropic 那条路径）要提醒一句 ——
+        // 两边单独看都没问题，合在一起就是一个 404，而服务端只会说"请求不对"。
+        SetText(window, "ModelEndpointBox", "https://nothing.invalid/anthropic/v1/messages");
+        Pump();
+
+        var endpointHint = ((TextBlock)window.FindName("ModelEndpointHint")!).Text;
+        Console.WriteLine($"地址与格式对不上时: {endpointHint.Replace("\n", " / ")}");
+        ok &= endpointHint.Contains("这条地址里没有");
+
+        Click(window, "获取模型列表");
+        WaitForHint(window, TimeSpan.FromSeconds(20));
+
+        var hint = ((TextBlock)window.FindName("ModelListHint")!).Text;
+        Console.WriteLine($"取不到时说的是     : {hint}");
+        ok &= hint.Contains("nothing.invalid") || hint.Contains("连不上");
+
+        // 取不到不该把已经填着的模型名弄丢。
+        var code = ((ComboBox)window.FindName("ModelCodePicker")!).Text;
+        Console.WriteLine($"取过之后模型名还是  : 「{code}」");
+        ok &= code == "some-model";
+
+        // ---- 四、勾上"启用"，保存
+        ((CheckBox)window.FindName("ModelActiveCheck")!).IsChecked = true;
+        Pump();
+
+        Click(window, "保存");
+        Pump();
+
+        Console.WriteLine();
+        Console.WriteLine($"点过「保存」之后");
+        Console.WriteLine($"  编辑页   : {editor.Visibility}（Collapsed = 已经回到列表）");
+        Console.WriteLine($"  列表行   : {string.Join(" / ", ItemsOf(list).Select(Describe))}");
+        Console.WriteLine($"  磁盘上是 : {string.Join(" / ", OnDisk(configPath).Models.Select(m => $"{m.Name}|{m.Model}|{m.Endpoint}"))}");
+        Console.WriteLine($"  启用的   : {OnDisk(configPath).ActiveModelId}");
+
+        var onDisk = OnDisk(configPath);
+        var saved = onDisk.Models.FirstOrDefault(m => m.Name == "示例中转");
+
+        ok &= editor.Visibility == Visibility.Collapsed
+              && saved is { Model: "some-model" }
+              && onDisk.ActiveModelId == saved!.Id;
+
+        // ---- 五、编辑已有的那个：可编辑下拉框里的模型名要能看见
+        //         （这类框有个坑：先填 Text 再把 ItemsSource 清空，Text 会被一起抹掉）
+        Click(window, "编辑");
+        Pump();
+
+        var loaded = ((ComboBox)window.FindName("ModelCodePicker")!).Text;
+        Console.WriteLine();
+        Console.WriteLine($"打开已有的服务商，模型名框里是: 「{loaded}」");
+        ok &= loaded == "deepseek-flash";
+
+        window.Close();
+
+        Console.WriteLine();
+        Console.WriteLine(ok ? "结论：这一页整条路是通的。" : "结论：有一处不对，见上面。");
+        return ok ? 0 : 1;
+    }
+
+    /// <summary>
+    /// 等「获取模型列表」那一次网络请求回来。
+    ///
+    /// 它是个 async void 处理函数，点完之后消息队列抽干也不代表跑完了 —— 得等那行提示不再是"正在取"。
+    /// </summary>
+    private static void WaitForHint(Window window, TimeSpan timeout)
+    {
+        var hint = (TextBlock)window.FindName("ModelListHint")!;
+        var end = DateTime.UtcNow + timeout;
+
+        while (DateTime.UtcNow < end)
+        {
+            Application.Current.Dispatcher.Invoke(() => { }, DispatcherPriority.ContextIdle);
+
+            if (!hint.Text.StartsWith("正在取", StringComparison.Ordinal))
+                return;
+
+            Thread.Sleep(100);
+        }
+    }
+
+    private static string Describe(ModelRow row) =>
+        $"{row.Name}{(row.IsActive ? "[使用中]" : "[未启用]")}";
+
+    private static IEnumerable<ModelRow> ItemsOf(ItemsControl items) =>
+        items.Items.OfType<ModelRow>();
+
+    private static void SetText(Window window, string name, string text)
+    {
+        if (window.FindName(name) is TextBox box)
+            box.Text = text;
+        else if (window.FindName(name) is ComboBox combo)
+            combo.Text = text;
+    }
+
+    /// <summary>按按钮上的字找它，然后点一下 —— 和用户做的是同一件事。</summary>
+    private static void Click(Window window, string text)
+    {
+        var button = Find(window, text) ?? throw new InvalidOperationException($"找不到写着「{text}」的按钮。");
+        button.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
+    }
+
+    private static ButtonBase? Find(DependencyObject root, string text)
+    {
+        if (root is ButtonBase b && b.Content is string s && s == text)
+            return b;
+
+        var count = System.Windows.Media.VisualTreeHelper.GetChildrenCount(root);
+        for (var i = 0; i < count; i++)
+        {
+            var found = Find(System.Windows.Media.VisualTreeHelper.GetChild(root, i), text);
+            if (found is not null)
+                return found;
+        }
+
+        return null;
+    }
+
+    private static AppConfig OnDisk(string configPath) => ConfigStore.LoadOrDefault(configPath);
+
+    private static void WriteConfig(string path)
+    {
+        var config = new AppConfig();
+        config.Ui.DryRun = true;
+        config.Logging.LogDirectory = Path.Combine(Path.GetDirectoryName(path)!, "logs");
+
+        config.Models.Add(new ModelProvider
+        {
+            Id = "m1",
+            Name = "DeepSeek",
+            Format = ApiFormat.Anthropic,
+            Endpoint = "https://api.deepseek.com/anthropic/v1/messages",
+            Model = "deepseek-flash",
+            ApiKey = "sk-old-key",
+        });
+
+        config.ActiveModelId = "m1";
+
+        ConfigStore.Save(config, path);
+    }
+
+    private static void Pump()
+    {
+        for (var i = 0; i < 4; i++)
+            Application.Current.Dispatcher.Invoke(() => { }, DispatcherPriority.ContextIdle);
+    }
+}

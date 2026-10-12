@@ -1,0 +1,40 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <ProjectReference Include="..\Sentinel.Core\Sentinel.Core.csproj" />
+    <ProjectReference Include="..\Sentinel.Platform\Sentinel.Platform.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- UseWindowsForms adds these as global usings, which makes every control type name
+         (Button, TextBox, CheckBox, Application, MessageBox…) ambiguous alongside WPF's. -->
+    <Using Remove="System.Windows.Forms" />
+    <Using Remove="System.Drawing" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <UseWPF>true</UseWPF>
+    <!-- The tray icon and its balloons come from WinForms' NotifyIcon; WPF has no equivalent. -->
+    <UseWindowsForms>true</UseWindowsForms>
+
+    <!-- One icon, three places: this is the exe's own icon (Explorer, and the taskbar button), and
+         the same file is a Resource so the windows and the tray can load it too. Regenerate it with
+         tools/IconGen rather than editing it. -->
+    <ApplicationIcon>..\..\assets\sentinel.ico</ApplicationIcon>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Linked in as Assets/sentinel.ico so the pack URI is the same in every assembly that uses it,
+         whatever depth its .csproj sits at. -->
+    <Resource Include="..\..\assets\sentinel.ico" Link="Assets\sentinel.ico" />
+
+    <!-- Same idea: the theme lives at the repo root so the setup wizard can merge the identical file
+         rather than referencing this whole assembly to reach it. -->
+    <Page Include="..\..\theme\SentinelTheme.xaml" Link="Theme\SentinelTheme.xaml" />
+  </ItemGroup>
+
+</Project>

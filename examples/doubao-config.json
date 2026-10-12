@@ -1,0 +1,54 @@
+{
+  "Version": 1,
+  "Targets": [
+    {
+      "Id": "doubao-work",
+      "DisplayName": "豆包工作（内置浏览器）",
+      "ProcessNames": ["DoubaoWork"],
+      "Enabled": true,
+      "Reader": { "ScanUrl": true, "ScanTitle": true, "ScanBody": false, "IntervalMs": 1000, "MaxBodyChars": 4096 },
+      "Rules": [
+        {
+          "Id": "r-url-baidu-search",
+          "Name": "URL 含 baidu.com/s（搜索页）",
+          "Enabled": true,
+          "PolicyId": "p-notify-minimize",
+          "Priority": 10,
+          "Match": {
+            "Type": "Keyword",
+            "Fields": ["Url"],
+            "Patterns": ["baidu.com/s"],
+            "CaseSensitive": false
+          }
+        },
+        {
+          "Id": "r-title-novel",
+          "Name": "标题含「名著」",
+          "Enabled": true,
+          "PolicyId": "p-notify-minimize",
+          "Priority": 5,
+          "Match": {
+            "Type": "Keyword",
+            "Fields": ["Title"],
+            "Patterns": ["名著"],
+            "CaseSensitive": false
+          }
+        }
+      ]
+    }
+  ],
+  "Policies": [
+    {
+      "Id": "p-notify-minimize",
+      "Name": "通知 3 秒后最小化",
+      "Actions": ["Notify", "Minimize"],
+      "GraceSeconds": 3,
+      "CooldownSeconds": 60,
+      "DebounceCount": 1
+    }
+  ],
+  "Schedules": [],
+  "Protection": { "Enabled": false, "Mode": "None", "SecretHash": null, "DelaySeconds": 0 },
+  "Logging": { "LogDirectory": "%TEMP%\\Sentinel\\logs", "LogBodyText": false, "LogUrlHash": true },
+  "Ui": { "Locale": "zh-CN", "DryRun": true }
+}

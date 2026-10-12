@@ -1,0 +1,49 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+      渲染预览。把真正的窗口在屏幕外跑起来、逐页截成 PNG，然后退出。
+
+      存在的理由：Agent 是单实例的，而在你机器上它正开着（监控也是活的）。于是"改完看看长什么样"
+      只能靠装一遍 —— 对一次视觉改版来说，这个循环太慢，而看不见就改等于闭着眼睛画。这个工具
+      绕开单实例（它不经过 App.OnStartup），只读到配置为止，绝不调用 Start()，所以监控不会起来，
+      也不会对任何目标动手。
+
+      用法：dotnet run（工程 tools/Sentinel.Preview），第一个参数是输出目录。
+  -->
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <UseWPF>true</UseWPF>
+    <UseWindowsForms>true</UseWindowsForms>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!--
+      引用安装程序，只为了在进程里把它的窗口渲染一次（setup-check）。
+      安装程序的清单要求管理员，那是"启动一个进程"时才生效的；在进程里构造它的窗口不会提权，
+      所以可以用这个办法验证它的 XAML —— 少一个资源键这种事只在运行时炸，编译期看不出来。
+    -->
+    <ProjectReference Include="..\..\src\Sentinel.Setup\Sentinel.Setup.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Same reason as the Agent: use-the-Windows-Forms adds these globally and every control type
+         name becomes ambiguous. -->
+    <Using Remove="System.Windows.Forms" />
+    <Using Remove="System.Drawing" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Sentinel.Agent\Sentinel.Agent.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- The real theme, not a copy. Rendering against anything else would be reviewing a picture of
+         a different program. -->
+    <Page Include="..\..\theme\SentinelTheme.xaml" Link="Theme\SentinelTheme.xaml" />
+  </ItemGroup>
+
+</Project>

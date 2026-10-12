@@ -1,0 +1,78 @@
+{
+  "Version": 1,
+  "Targets": [
+    {
+      "Id": "demo-edge",
+      "DisplayName": "Edge（演示目标）",
+      "ProcessNames": ["msedge"],
+      "Enabled": true,
+      "Reader": {
+        "ScanUrl": true,
+        "ScanTitle": true,
+        "ScanBody": false,
+        "IntervalMs": 1000,
+        "MaxBodyChars": 4096
+      },
+      "Rules": [
+        {
+          "Id": "r-url-deepseek",
+          "Name": "URL 含 deepseek",
+          "Enabled": true,
+          "PolicyId": "notify-then-close",
+          "Priority": 10,
+          "Match": {
+            "Type": "Keyword",
+            "Fields": ["Url"],
+            "Patterns": ["deepseek"],
+            "CaseSensitive": false
+          }
+        },
+        {
+          "Id": "r-whitelist-example",
+          "Name": "白名单：example.com 放行",
+          "Enabled": true,
+          "PolicyId": "",
+          "Priority": 100,
+          "Match": {
+            "Type": "Whitelist",
+            "Fields": ["Url"],
+            "Patterns": ["example.com"],
+            "CaseSensitive": false
+          }
+        }
+      ]
+    }
+  ],
+  "Policies": [
+    {
+      "Id": "notify-then-close",
+      "Name": "通知 5 秒后关窗",
+      "Actions": ["Notify", "Close"],
+      "GraceSeconds": 5,
+      "CooldownSeconds": 60,
+      "DebounceCount": 1
+    }
+  ],
+  "Schedules": [
+    {
+      "Id": "work-hours",
+      "DaysOfWeek": ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"],
+      "TimeWindows": [{ "Start": "09:00", "End": "18:00" }]
+    }
+  ],
+  "Protection": {
+    "Enabled": false,
+    "Mode": "None",
+    "SecretHash": null,
+    "DelaySeconds": 0
+  },
+  "Logging": {
+    "LogDirectory": "%TEMP%\\Sentinel\\logs",
+    "LogBodyText": false,
+    "LogUrlHash": true
+  },
+  "Ui": {
+    "Locale": "zh-CN",
+    "DryRun": true
+  }
+}

@@ -1,0 +1,16 @@
+﻿<Application x:Class="Sentinel.Agent.App"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:local="clr-namespace:Sentinel.Agent"
+             ShutdownMode="OnExplicitShutdown">
+    <Application.Resources>
+        <ResourceDictionary>
+            <ResourceDictionary.MergedDictionaries>
+                <!-- 颜色、字体、控件样式全在 theme/SentinelTheme.xaml 里，和安装向导共用同一份。
+                     这里不再放第二份隐式样式：同一作用域里再定义一次 Button，就会和主题里那份
+                     撞在同一个键上。 -->
+                <ResourceDictionary Source="Theme/SentinelTheme.xaml" />
+            </ResourceDictionary.MergedDictionaries>
+        </ResourceDictionary>
+    </Application.Resources>
+</Application>

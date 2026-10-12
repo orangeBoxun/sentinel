@@ -1,0 +1,932 @@
+<Window x:Class="Sentinel.Agent.MainWindow" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" Title="Sentinel" Height="760" Width="1180" MinHeight="520" MinWidth="900" Icon="Assets/sentinel.ico" Style="{StaticResource AppWindow}" WindowStartupLocation="CenterScreen">
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <!-- 回纹饰带，上下各一条，把窗口框起来。全界面唯一一处纯装饰，所以贴着边单独占行，不碰内容。 -->
+        <Border Grid.Row="0" Height="12" Background="{StaticResource KnotBand}" />
+
+        <TabControl x:Name="Tabs" Grid.Row="1">
+
+            <!-- ============ 概览 ============ -->
+            <TabItem>
+                <TabItem.Header>
+                    <StackPanel Orientation="Horizontal">
+                        <Path Style="{StaticResource NavIcon}" Stroke="{StaticResource TintBlue}" Data="M 2.4,2.4 H 6.9 V 6.9 H 2.4 Z M 9.1,2.4 H 13.6 V 6.9 H 9.1 Z M 2.4,9.1 H 6.9 V 13.6 H 2.4 Z M 9.1,9.1 H 13.6 V 13.6 H 9.1 Z" />
+                        <TextBlock FontSize="15" Text="概览" VerticalAlignment="Center" />
+                    </StackPanel>
+                </TabItem.Header>
+
+                <ScrollViewer VerticalScrollBarVisibility="Auto">
+                    <!-- 卡片式排布而不是一列到底：窗口宽了卡片就并排，窄了自动折回一列。
+                         固定卡片宽度（而不是把卡片拉满）是因为一张 2000px 宽的卡片里，
+                         一行说明文字会长到没法读。 -->
+                    <StackPanel Style="{StaticResource Page}">
+
+                        <TextBlock Style="{StaticResource H1}" Text="概览" />
+                        <TextBlock Style="{StaticResource Hint}" Margin="0,7,0,0" Text="用 UIA 读取目标窗口的标题 / 网址 / 正文，命中规则后按策略动作。" />
+
+                        <Grid Margin="0,22,0,0"><Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="18" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions><Grid Margin="0,0,0,18" VerticalAlignment="Top"><Border x:Name="StatusCard" Style="{StaticResource Card}">
+                            <StackPanel>
+                                <!-- 状态点 + 大字：一眼就能看出在不在跑。颜色只在这一处和数字上出现。 -->
+                                <StackPanel Orientation="Horizontal">
+                                    <Ellipse x:Name="StatusDot" Width="9" Height="9" VerticalAlignment="Center" Margin="0,0,10,0" />
+                                    <TextBlock x:Name="StatusText" FontSize="17" FontWeight="Normal" VerticalAlignment="Center" />
+                                </StackPanel>
+                                <TextBlock x:Name="StatusDetailText" Style="{StaticResource Hint}" Margin="19,7,0,0" />
+
+                                <!-- WrapPanel 而不是横向 StackPanel：卡片变窄时按钮自己换行，
+                                     而不是把最后一个挤成只剩图标。 -->
+                                <WrapPanel Margin="0,18,0,0">
+                                    <Button Style="{StaticResource IconButton}" Tag="{StaticResource IconPlay}" Content="启动监控" Click="StartMonitor_Click" Margin="0,0,8,8" />
+                                    <Button x:Name="StopMonitorButton" Style="{StaticResource IconButton}" Tag="{StaticResource IconStop}" Content="停止监控" Click="StopMonitor_Click" Margin="0,0,8,8" />
+                                    <Button Style="{StaticResource IconButton}" Tag="{StaticResource IconCheck}" Content="校验配置" Click="ValidateConfig_Click" Margin="0,0,8,8" />
+                                    <Button Style="{StaticResource IconButton}" Tag="{StaticResource IconFolder}" Content="配置目录" Click="OpenConfigFolder_Click" Margin="0,0,8,8" />
+                                </WrapPanel>
+
+                                <!-- 三组数字。参照的那几个界面都靠"小标题 + 大数字"撑起版面的分量。 -->
+                                <WrapPanel Margin="0,20,0,0">
+                                    <StackPanel Margin="0,0,30,0">
+                                        <TextBlock x:Name="TargetCountText" Style="{StaticResource StatNumber}" Text="—" />
+                                        <TextBlock Style="{StaticResource StatLabel}" Text="个目标" />
+                                    </StackPanel>
+                                    <StackPanel Margin="0,0,30,0">
+                                        <TextBlock x:Name="RuleCountText" Style="{StaticResource StatNumber}" Text="—" />
+                                        <TextBlock Style="{StaticResource StatLabel}" Text="条规则" />
+                                    </StackPanel>
+                                    <StackPanel>
+                                        <TextBlock x:Name="PolicyCountText" Style="{StaticResource StatNumber}" Text="—" />
+                                        <TextBlock Style="{StaticResource StatLabel}" Text="条策略" />
+                                    </StackPanel>
+                                </WrapPanel>
+
+                                <CheckBox x:Name="DryRunCheck" Margin="0,20,0,0" Checked="DryRun_Changed" Unchecked="DryRun_Changed"><TextBlock Text="安全模式：只记录，不执行动作（建议先用它调规则）" TextWrapping="Wrap" /></CheckBox>
+
+                                <TextBlock x:Name="ValidationText" Style="{StaticResource Hint}" Margin="0,14,0,0" Foreground="{StaticResource Danger}" />
+
+                                <Separator Margin="0,16,0,12" />
+
+                                <TextBlock Style="{StaticResource Micro}" Margin="0,0,0,6" Text="配置文件" />
+                                <TextBlock x:Name="ConfigPathText" Style="{StaticResource MonoCaption}" />
+
+                                <!-- 这里原来有个「保存配置」。它没有存在的理由：每个页签有自己的「应用修改」，
+                                     「新建」「删除」「安全模式」都是当场就存，连点一下列表项也会存。所以按它的时候
+                                     内容早就存过了，它只是把同样的东西再写一遍，按下去屏幕上什么都不会变。
+                                     一个按了什么都不会发生的按钮比没有按钮更糟。 -->
+                            </StackPanel>
+                        </Border></Grid><StackPanel Grid.Column="2"><Grid Margin="0,0,0,18" VerticalAlignment="Top"><Border Style="{StaticResource Card}">
+                            <StackPanel>
+                                <TextBlock Style="{StaticResource H2}" Text="解锁保护" />
+                                <TextBlock x:Name="UnlockStatusText" Style="{StaticResource Hint}" Margin="0,8,0,0" />
+
+                                <!-- 主动的那条路：不用先改东西。只在保护开着时出现。 -->
+                                <Button x:Name="ReleaseButton" Content="关闭解锁保护…" HorizontalAlignment="Left" Style="{StaticResource DangerIconButton}" Tag="{StaticResource IconStop}" Margin="0,14,0,0" Visibility="Collapsed" Click="RequestRelease_Click" />
+
+                                <!-- 反过来的那条：保护没开的时候才有这个入口。
+                                     以前开保护要手动往安装目录丢公钥文件（还得管理员 + 命令行），
+                                     这是整个设置流程里唯一一步"工具帮不上忙"的地方。 -->
+                                <Button x:Name="EnableButton" Content="开启解锁保护…" HorizontalAlignment="Left" Style="{StaticResource PrimaryIconButton}" Tag="{StaticResource IconLock}" Margin="0,14,0,0" Click="RequestEnable_Click" />
+
+                                <Border x:Name="EnablePanel" Visibility="Collapsed" Margin="0,14,0,0" Background="{StaticResource Fill}" BorderBrush="{StaticResource Hairline}" BorderThickness="1" CornerRadius="10" Padding="16">
+                                    <StackPanel>
+                                        <TextBlock FontWeight="SemiBold" Text="开启解锁保护" />
+                                        <TextBlock Style="{StaticResource Hint}" Margin="0,7,0,0"
+                                                   Text="把手机页面上生成的那把公钥粘进来 —— 只粘 PUBLIC KEY 那一份，私钥留在手机里，永远不要带过来。" />
+
+                                        <TextBlock Style="{StaticResource FieldLabel}" Margin="0,18,0,8" Text="公钥（-----BEGIN PUBLIC KEY----- 开头）" />
+                                        <TextBox x:Name="PublicKeyText" Style="{StaticResource MonoTextBox}" AcceptsReturn="True" TextWrapping="Wrap" Height="Auto" MinHeight="110" MaxHeight="170" VerticalScrollBarVisibility="Auto" />
+
+                                        <WrapPanel Margin="0,10,0,0">
+                                            <Button Style="{StaticResource IconButton}" Tag="{StaticResource IconExternal}" Content="生成密钥对…" Margin="0,0,8,8" Click="OpenKeygenPage_Click" />
+                                            <Button Style="{StaticResource IconButton}" Tag="{StaticResource IconFolder}" Content="从文件读入…" Margin="0,0,8,8" Click="LoadPublicKeyFile_Click" />
+                                            <Button Style="{StaticResource PrimaryIconButton}" Tag="{StaticResource IconCheck}" Content="开启保护" Margin="0,0,8,8" Click="ConfirmEnable_Click" />
+                                            <Button Content="取消" Margin="0,0,8,8" Click="CancelEnable_Click" />
+                                        </WrapPanel>
+
+                                        <TextBlock x:Name="EnableError" Style="{StaticResource ErrorText}" Margin="0,6,0,0" />
+                                    </StackPanel>
+                                </Border>
+
+                                <!-- 只在需要令牌的时候露出来 -->
+                                <Border x:Name="UnlockPanel" Visibility="Collapsed" Margin="0,14,0,0" Background="{StaticResource WarningSurface}" BorderBrush="{StaticResource WarningBorder}" BorderThickness="1" CornerRadius="10" Padding="16">
+                                    <StackPanel>
+                                        <TextBlock x:Name="UnlockPanelTitle" FontWeight="SemiBold" Foreground="{StaticResource Warning}" Text="这次修改会放宽限制，需要解锁令牌" />
+
+                                        <!-- 文字由 RefreshUnlockPanel 填。这里不写一份：这一页和「关闭解锁保护」
+                                             共用这个面板，两边各留一份副本的话，改了一处就会有一处变旧。 -->
+                                        <TextBlock x:Name="UnlockPanelHint" Margin="0,7,0,0" TextWrapping="Wrap" LineHeight="20" />
+
+                                        <TextBlock Style="{StaticResource FieldLabel}" Margin="0,20,0,8" Text="解锁码" />
+                                        <TextBox x:Name="UnlockRequestText" IsReadOnly="True" Style="{StaticResource MonoTextBox}" TextWrapping="Wrap" Height="Auto" MinHeight="60" MaxHeight="76" VerticalScrollBarVisibility="Auto" />
+                                        <WrapPanel Margin="0,8,0,0">
+                                            <Button Style="{StaticResource IconButton}" Tag="{StaticResource IconCopy}" Content="复制解锁码" Margin="0,0,8,8" Click="CopyUnlockRequest_Click" />
+                                            <Button Style="{StaticResource IconButton}" Tag="{StaticResource IconExternal}" Content="签名换令牌…" Margin="0,0,8,8" Click="OpenSignPage_Click" />
+                                        </WrapPanel>
+
+                                        <!-- 用完之后该删什么，在这里说一次 —— 页面上也说了，但用户多半先看到这一屏。 -->
+                                        <TextBlock Style="{StaticResource Caption}" Margin="0,0,0,0" TextWrapping="Wrap"
+                                                   Text="签完记得：私钥不再需要就删掉，页面上按「清空」。私钥只该留在手机保险箱里。" />
+
+                                        <TextBlock Style="{StaticResource FieldLabel}" Margin="0,20,0,8" Text="令牌" />
+                                        <TextBox x:Name="UnlockTokenText" Style="{StaticResource MonoTextBox}" TextWrapping="Wrap" Height="Auto" MinHeight="60" MaxHeight="76" VerticalScrollBarVisibility="Auto" />
+                                        <StackPanel Orientation="Horizontal" Margin="0,10,0,0">
+                                            <Button x:Name="UnlockRetryButton" Style="{StaticResource PrimaryIconButton}" Tag="{StaticResource IconCheck}" Content="用令牌重试保存" Margin="0,0,8,0" Click="RetryWithToken_Click" />
+                                            <Button Content="取消" Click="CancelUnlock_Click" />
+                                        </StackPanel>
+
+                                        <TextBlock x:Name="UnlockPanelError" Style="{StaticResource ErrorText}" Margin="0,10,0,0" />
+                                    </StackPanel>
+                                </Border>
+                            </StackPanel>
+                        </Border></Grid><Grid Margin="0,0,0,18" VerticalAlignment="Top"><Border Style="{StaticResource Card}" Padding="20,20,20,14">
+                            <StackPanel>
+                                <TextBlock Style="{StaticResource H2}" Text="最近动作（本次运行）" />
+                                <Grid Margin="0,10,0,0">
+                                    <ListBox x:Name="RecentList" Height="140" FontFamily="{StaticResource MonoFont}" FontSize="11.5" />
+
+                                    <!-- 空列表不该只是一片白。这棵小草是全界面唯一的纯装饰，
+                                         所以做得最安静：单色线条，不抢任何注意力。 -->
+                                    <StackPanel x:Name="RecentEmpty" VerticalAlignment="Center" HorizontalAlignment="Center" IsHitTestVisible="False">
+                                        <Path Style="{StaticResource EmptyMark}" Data="{StaticResource IconSprout}" HorizontalAlignment="Center" />
+                                        <TextBlock Style="{StaticResource Caption}" Margin="0,10,0,0" TextAlignment="Center" TextWrapping="Wrap" MaxWidth="230" Text="还没有动作。启动监控之后，命中规则的事会记在这里。" />
+                                    </StackPanel>
+                                </Grid>
+                            </StackPanel>
+                        </Border></Grid></StackPanel></Grid>
+
+                    </StackPanel>
+                </ScrollViewer>
+            </TabItem>
+
+            <!-- ============ 密码保险箱 ============ -->
+            <TabItem>
+                <TabItem.Header>
+                    <StackPanel Orientation="Horizontal">
+                        <Path Style="{StaticResource NavIcon}" Stroke="{StaticResource TintAmber}" Data="M 3.9,7.3 H 12.1 V 13.5 H 3.9 Z M 6.1,7.3 V 5.3 A 1.95,1.95 0 0 1 9.9,5.3 V 7.3" />
+                        <TextBlock FontSize="15" Text="密码保险箱" VerticalAlignment="Center" />
+                    </StackPanel>
+                </TabItem.Header>
+
+                <ScrollViewer VerticalScrollBarVisibility="Auto">
+                    <StackPanel Style="{StaticResource Page}">
+                        <TextBlock Style="{StaticResource H1}" Text="密码保险箱" />
+                        <TextBlock Style="{StaticResource Hint}" Margin="0,7,0,0" Text="放任何文件或文件夹。内容加密保存，打开要输密码A；监护码B 交给别人拿着。" />
+
+                        <WrapPanel Margin="0,22,0,0">
+
+                        <Grid Margin="0,0,18,18" Width="410" VerticalAlignment="Top"><Border Style="{StaticResource Card}">
+                            <StackPanel>
+                                <TextBlock x:Name="VaultStatusText" TextWrapping="Wrap" LineHeight="21" />
+                                <Button Content="打开保险箱" Style="{StaticResource PrimaryIconButton}" Tag="{StaticResource IconLock}" HorizontalAlignment="Left" Margin="0,16,0,0" Click="OpenVault_Click" />
+                            </StackPanel>
+                        </Border></Grid>
+
+                        <Grid Margin="0,0,18,18" Width="410" VerticalAlignment="Top"><Border Style="{StaticResource Card}">
+                            <StackPanel>
+                                <TextBlock Style="{StaticResource H2}" Text="它为什么能拦住你" />
+                                <TextBlock Style="{StaticResource Hint}" Margin="0,9,0,0" Text="密码A 只在防护完好时管用 —— 服务在册、看门狗在跑。一旦防护被拆掉（卸载、sc delete、删掉看门狗任务），A 会立刻失效，只剩监护码B 能开。所以想删掉整个程序来绕过的话，代价是要去跟那个人开口。" />
+                            </StackPanel>
+                        </Border></Grid>
+
+                        </WrapPanel>
+                    </StackPanel>
+                </ScrollViewer>
+            </TabItem>
+
+            <!-- ============ 目标 ============ -->
+            <TabItem>
+                <TabItem.Header>
+                    <StackPanel Orientation="Horizontal">
+                        <Path Style="{StaticResource NavIcon}" Stroke="{StaticResource TintTeal}" Data="M 2.6,8 A 5.4,5.4 0 1 0 13.4,8 A 5.4,5.4 0 1 0 2.6,8 M 5.9,8 A 2.1,2.1 0 1 0 10.1,8 A 2.1,2.1 0 1 0 5.9,8 M 8,0.9 V 3 M 8,13 V 15.1 M 0.9,8 H 3 M 13,8 H 15.1" />
+                        <TextBlock FontSize="15" Text="目标" VerticalAlignment="Center" />
+                    </StackPanel>
+                </TabItem.Header>
+
+                <Grid Margin="32,26,32,26"><Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /></Grid.RowDefinitions>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="0.3*" MinWidth="190" MaxWidth="250" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+
+                    <StackPanel Grid.ColumnSpan="2" Margin="0,0,0,24"><TextBlock Style="{StaticResource H1}" Text="目标" /><TextBlock Style="{StaticResource Hint}" Margin="0,7,0,0" Text="要拦哪个应用。读不到内容的那些，规则再对也拦不住。" /></StackPanel><DockPanel Grid.Row="1">
+                        
+                        
+
+                        <WrapPanel DockPanel.Dock="Bottom" Margin="0,12,0,0">
+                            <Button Style="{StaticResource IconButton}" Tag="{StaticResource IconPlus}" Content="新建" Click="NewTarget_Click" Margin="0,0,8,8" />
+                            <Button Style="{StaticResource IconButton}" Tag="{StaticResource IconTrash}" Content="删除" Click="DeleteTarget_Click" Margin="0,0,8,8" />
+                        </WrapPanel>
+
+                        <Grid><Border Style="{StaticResource Card}" Padding="0" BorderThickness="0">
+                            <ListBox x:Name="TargetList" ScrollViewer.HorizontalScrollBarVisibility="Disabled" SelectionChanged="TargetList_SelectionChanged"><ListBox.ItemTemplate><DataTemplate><TextBlock Text="{Binding DisplayName}" TextWrapping="Wrap" /></DataTemplate></ListBox.ItemTemplate></ListBox>
+                        </Border></Grid>
+                    </DockPanel>
+
+                    <ScrollViewer Grid.Column="1" Margin="20,0,0,0" VerticalScrollBarVisibility="Auto" Grid.Row="1">
+                        <StackPanel x:Name="TargetForm" IsEnabled="False">
+
+                            <Grid><Border Style="{StaticResource Card}">
+                                <StackPanel>
+                                    <TextBlock Style="{StaticResource H2}" Text="怎么认出它" />
+                                    <TextBlock Style="{StaticResource Hint}" Margin="0,7,0,0" Text="进程名是主要依据；窗口标题正则可以进一步收窄。" />
+
+                                    <WrapPanel Margin="0,16,0,0">
+                                        <StackPanel Style="{StaticResource FieldBlock}">
+                                            <TextBlock Style="{StaticResource FieldLabel}" Margin="0,0,0,8" Text="显示名" />
+                                            <TextBox x:Name="TargetNameBox" />
+                                        </StackPanel>
+                                        <StackPanel Style="{StaticResource FieldBlock}">
+                                            <TextBlock Style="{StaticResource FieldLabel}" Margin="0,0,0,8" Text="进程名（逗号分隔，不含 .exe）" />
+                                            <TextBox x:Name="TargetProcessBox" />
+                                        </StackPanel>
+                                        <StackPanel Style="{StaticResource FieldBlock}">
+                                            <TextBlock Style="{StaticResource FieldLabel}" Margin="0,0,0,8" Text="窗口标题正则（可选）" />
+                                            <TextBox x:Name="TargetTitleBox" />
+                                        </StackPanel>
+                                    </WrapPanel>
+
+                                    <TextBlock Style="{StaticResource FieldLabel}" Margin="0,2,0,8" Text="或者从运行中的窗口里挑一个" />
+                                    <WrapPanel>
+                                        <ComboBox x:Name="WindowPicker" Width="280" Margin="0,0,8,0" DisplayMemberPath="Display" />
+                                        <Button Style="{StaticResource ToolIconButton}" Tag="{StaticResource IconRefresh}" Content="刷新" Margin="0,0,8,0" Click="RefreshWindowPicker_Click" />
+                                        <Button Style="{StaticResource ToolIconButton}" Tag="{StaticResource IconCheck}" Content="用这个进程名" Click="UsePickedProcess_Click" />
+                                    </WrapPanel>
+                                </StackPanel>
+                            </Border></Grid>
+
+                            <Grid Margin="0,18,0,0"><Border Style="{StaticResource Card}">
+                                <StackPanel>
+                                    <TextBlock Style="{StaticResource H2}" Text="读什么" />
+                                    <TextBlock Style="{StaticResource Hint}" Margin="0,7,0,0" Text="想按网址拦（浏览器、内置浏览器）就勾「网址」；想按页面内容拦就勾「正文」。不确定某个应用读不读得到，去「诊断」页测一下。" />
+
+                                    <WrapPanel Margin="0,14,0,0">
+                                        <CheckBox x:Name="ScanUrlCheck" Content="网址" Margin="0,0,18,0" />
+                                        <CheckBox x:Name="ScanTitleCheck" Content="标题" Margin="0,0,18,0" />
+                                        <CheckBox x:Name="ScanBodyCheck" Content="正文" Margin="0,0,18,0" />
+                                        <TextBlock Text="轮询间隔" VerticalAlignment="Center" Foreground="{StaticResource TextSecondary}" />
+                                        <TextBox x:Name="IntervalBox" Style="{StaticResource NumericBox}" Margin="8,0,6,0" />
+                                        <TextBlock Text="毫秒" VerticalAlignment="Center" Foreground="{StaticResource TextSecondary}" />
+                                    </WrapPanel>
+
+                                    <CheckBox x:Name="TargetEnabledCheck" Content="启用这个目标" Margin="0,16,0,0" />
+                                </StackPanel>
+                            </Border></Grid>
+
+                            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,16,0,8">
+                                <TextBlock x:Name="TargetDirtyMark" Style="{StaticResource DirtyMark}" Text="● 有未保存的修改" />
+                                <Button x:Name="ApplyTargetButton" Content="应用修改" Style="{StaticResource PrimaryIconButton}" Tag="{StaticResource IconCheck}" Click="ApplyTarget_Click" />
+                            </StackPanel>
+                        </StackPanel>
+                    </ScrollViewer>
+                </Grid>
+            </TabItem>
+
+            <!-- ============ 规则 ============ -->
+            <TabItem>
+                <TabItem.Header>
+                    <StackPanel Orientation="Horizontal">
+                        <Path Style="{StaticResource NavIcon}" Stroke="{StaticResource TintViolet}" Data="M 2.6,4.4 H 13.4 M 2.6,8 H 13.4 M 2.6,11.6 H 9.4" />
+                        <TextBlock FontSize="15" Text="规则" VerticalAlignment="Center" />
+                    </StackPanel>
+                </TabItem.Header>
+
+                <Grid Margin="32,26,32,26">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                    </Grid.RowDefinitions>
+
+                    <StackPanel Orientation="Horizontal" Margin="0,0,0,18">
+                        <TextBlock Text="目标：" VerticalAlignment="Center" Foreground="{StaticResource TextSecondary}" />
+                        <ComboBox x:Name="RuleTargetPicker" Width="260" Margin="8,0,0,0" DisplayMemberPath="DisplayName" SelectionChanged="RuleTargetPicker_SelectionChanged" />
+                    </StackPanel>
+
+                    <Grid Grid.Row="1">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="0.3*" MinWidth="190" MaxWidth="250" />
+                            <ColumnDefinition Width="*" />
+                        </Grid.ColumnDefinitions>
+
+                        <DockPanel>
+                            <TextBlock DockPanel.Dock="Top" Style="{StaticResource H2}" Margin="0,0,0,10" Text="规则（数字大的先判定）" />
+                            <StackPanel DockPanel.Dock="Bottom" Margin="0,12,0,0">
+                                <!-- 自动换行。左栏只有 250px，「暂停 10 分钟」这个标签一长，
+                                     横向 StackPanel 就会把最后一个按钮顶出栏外 —— 而且没有滚动条能救。 -->
+                                <WrapPanel>
+                                    <Button Style="{StaticResource IconButton}" Tag="{StaticResource IconPlus}" Content="新建" Click="NewRule_Click" Margin="0,0,8,8" />
+                                    <Button Style="{StaticResource IconButton}" Tag="{StaticResource IconTrash}" Content="删除" Click="DeleteRule_Click" Margin="0,0,8,8" />
+                                    <Button x:Name="PauseButton" Style="{StaticResource IconButton}" Tag="{StaticResource IconPause}" Content="暂停" Click="PauseRule_Click" Margin="0,0,8,8" />
+                                </WrapPanel>
+                                <TextBlock x:Name="PauseText" Style="{StaticResource Hint}" Margin="0,2,0,0" />
+                            </StackPanel>
+                            <Grid><Border Style="{StaticResource Card}" Padding="0" BorderThickness="0">
+                                <ListBox x:Name="RuleList" ScrollViewer.HorizontalScrollBarVisibility="Disabled" SelectionChanged="RuleList_SelectionChanged"><ListBox.ItemTemplate><DataTemplate><TextBlock Text="{Binding Name}" TextWrapping="Wrap" /></DataTemplate></ListBox.ItemTemplate></ListBox>
+                            </Border></Grid>
+                        </DockPanel>
+
+                        <ScrollViewer Grid.Column="1" Margin="20,0,0,0" VerticalScrollBarVisibility="Auto">
+                            <StackPanel x:Name="RuleForm" IsEnabled="False">
+
+                                <Grid><Border Style="{StaticResource Card}">
+                                    <StackPanel>
+                                        <TextBlock Style="{StaticResource H2}" Text="命中什么" />
+
+                                        <WrapPanel Margin="0,16,0,0">
+                                            <StackPanel Style="{StaticResource FieldBlock}">
+                                                <TextBlock Style="{StaticResource FieldLabel}" Margin="0,0,0,8" Text="规则名" />
+                                                <TextBox x:Name="RuleNameBox" />
+                                            </StackPanel>
+                                            <StackPanel Style="{StaticResource FieldBlock}">
+                                                <TextBlock Style="{StaticResource FieldLabel}" Margin="0,0,0,8" Text="类型" />
+                                                <ComboBox x:Name="RuleTypeBox" DisplayMemberPath="Display" SelectionChanged="RuleType_Changed" />
+                                            </StackPanel>
+                                            <StackPanel Style="{StaticResource FieldBlock}">
+                                                <TextBlock Style="{StaticResource FieldLabel}" Margin="0,0,0,8" Text="匹配哪个字段（可多选）" />
+                                                <StackPanel Orientation="Horizontal" Margin="0,6,0,0">
+                                                    <CheckBox x:Name="FieldUrlCheck" Content="网址" Margin="0,0,18,0" />
+                                                    <CheckBox x:Name="FieldTitleCheck" Content="标题" Margin="0,0,18,0" />
+                                                    <CheckBox x:Name="FieldBodyCheck" Content="正文" />
+                                                </StackPanel>
+                                            </StackPanel>
+                                        </WrapPanel>
+
+                                        <TextBlock x:Name="RulePatternsLabel" Style="{StaticResource FieldLabel}" Margin="0,0,0,8" Text="匹配内容（每行一条）" />
+                                        <TextBox x:Name="RulePatternsBox" Height="104" AcceptsReturn="True" VerticalScrollBarVisibility="Auto" Style="{StaticResource MonoTextBox}" />
+                                        <TextBlock x:Name="RulePatternsHint" Style="{StaticResource Caption}" Margin="0,8,0,0"
+                                                   TextWrapping="Wrap" Visibility="Collapsed" />
+                                    </StackPanel>
+                                </Border></Grid>
+
+                                <Grid Margin="0,18,0,0"><Border Style="{StaticResource Card}">
+                                    <StackPanel>
+                                        <TextBlock Style="{StaticResource H2}" Text="命中后" />
+
+                                        <WrapPanel Margin="0,16,0,0">
+                                            <StackPanel Style="{StaticResource FieldBlock}">
+                                                <TextBlock Style="{StaticResource FieldLabel}" Margin="0,0,0,8" Text="执行哪条策略" />
+                                                <ComboBox x:Name="RulePolicyBox" DisplayMemberPath="Display" />
+                                            </StackPanel>
+                                            <StackPanel Style="{StaticResource FieldBlock}">
+                                                <!-- 用户问过"优先级是什么意思"，所以这里直接写清楚规则 -->
+                                                <TextBlock Style="{StaticResource FieldLabel}" Margin="0,0,0,8" Text="优先级（数字大的先判定）" />
+                                                <TextBox x:Name="RulePriorityBox" Style="{StaticResource NumericBox}" HorizontalAlignment="Left" />
+                                            </StackPanel>
+                                            <StackPanel Style="{StaticResource FieldBlock}">
+                                                <TextBlock Style="{StaticResource FieldLabel}" Margin="0,0,0,8" Text="生效时间表（留空 = 始终生效）" />
+                                                <ComboBox x:Name="RuleScheduleBox" DisplayMemberPath="Display" />
+                                            </StackPanel>
+                                        </WrapPanel>
+
+                                        <TextBlock Style="{StaticResource FieldLabel}" Margin="0,0,0,8" Text="提醒语（可选）—— 命中时显示给你自己" />
+                                        <TextBox x:Name="RuleReminderBox" Height="60" AcceptsReturn="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto" />
+                                        <TextBlock Style="{StaticResource Hint}" Margin="0,8,0,0" Text="冷静时写给冲动时的自己。程序替你写的听起来像唠叨，你自己写的那句不是。" />
+
+                                        <CheckBox x:Name="RuleEnabledCheck" Content="启用这条规则" Margin="0,16,0,0" />
+                                    </StackPanel>
+                                </Border></Grid>
+
+                                <!-- 暂停挂在规则上，不是目标上。目标是一个应用，规则是"具体哪件事"——
+                                     想放过的通常是某一条，而不是这个应用下的全部。 -->
+                                <Grid Margin="0,18,0,0"><Border Style="{StaticResource Card}">
+                                    <StackPanel>
+                                        <TextBlock Style="{StaticResource H2}" Text="暂停" />
+                                        <TextBlock Style="{StaticResource Hint}" Margin="0,7,0,0" Text="不需要解锁就能把这条规则停一会儿，每 N 天一次。想把这里调松（开启、更频繁、更长），跟其他放宽一样要令牌 —— 额度按规则分开算，花在哪一条上是你说得清楚的。" />
+
+                                        <CheckBox x:Name="RulePauseEnabledCheck" Content="允许暂停这条规则" Margin="0,14,0,0" />
+                                        <WrapPanel Margin="0,10,0,0">
+                                            <TextBlock Text="每" VerticalAlignment="Center" Foreground="{StaticResource TextSecondary}" />
+                                            <TextBox x:Name="RulePauseDaysBox" Style="{StaticResource NumericBox}" Margin="8,0,6,0" />
+                                            <TextBlock Text="天可以暂停一次，每次" VerticalAlignment="Center" Foreground="{StaticResource TextSecondary}" />
+                                            <TextBox x:Name="RulePauseMinutesBox" Style="{StaticResource NumericBox}" Margin="8,0,6,0" />
+                                            <TextBlock Text="分钟" VerticalAlignment="Center" Foreground="{StaticResource TextSecondary}" />
+                                        </WrapPanel>
+                                    </StackPanel>
+                                </Border></Grid>
+
+                                <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,16,0,8">
+                                <TextBlock x:Name="RuleDirtyMark" Style="{StaticResource DirtyMark}" Text="● 有未保存的修改" />
+                                <Button x:Name="ApplyRuleButton" Content="应用修改" Style="{StaticResource PrimaryIconButton}" Tag="{StaticResource IconCheck}" Click="ApplyRule_Click" />
+                            </StackPanel>
+                            </StackPanel>
+                        </ScrollViewer>
+                    </Grid>
+                </Grid>
+            </TabItem>
+
+            <!-- ============ 策略 ============ -->
+            <TabItem>
+                <TabItem.Header>
+                    <StackPanel Orientation="Horizontal">
+                        <Path Style="{StaticResource NavIcon}" Stroke="{StaticResource TintRose}" Data="M 2.6,4.5 H 13.4 M 2.6,8 H 13.4 M 2.6,11.5 H 13.4 M 5.2,4.5 A 1.15,1.15 0 1 0 7.5,4.5 A 1.15,1.15 0 1 0 5.2,4.5 M 9,8 A 1.15,1.15 0 1 0 11.3,8 A 1.15,1.15 0 1 0 9,8 M 4.2,11.5 A 1.15,1.15 0 1 0 6.5,11.5 A 1.15,1.15 0 1 0 4.2,11.5" />
+                        <TextBlock FontSize="15" Text="策略" VerticalAlignment="Center" />
+                    </StackPanel>
+                </TabItem.Header>
+
+                <Grid Margin="32,26,32,26"><Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /></Grid.RowDefinitions>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="0.3*" MinWidth="190" MaxWidth="250" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+
+                    <StackPanel Grid.ColumnSpan="2" Margin="0,0,0,24"><TextBlock Style="{StaticResource H1}" Text="策略" /><TextBlock Style="{StaticResource Hint}" Margin="0,7,0,0" Text="命中之后做什么。只有「杀掉进程」是真拦得住的。" /></StackPanel><DockPanel Grid.Row="1">
+                        
+                        
+                        <WrapPanel DockPanel.Dock="Bottom" Margin="0,12,0,0">
+                            <Button Style="{StaticResource IconButton}" Tag="{StaticResource IconPlus}" Content="新建" Click="NewPolicy_Click" Margin="0,0,8,8" />
+                            <Button Style="{StaticResource IconButton}" Tag="{StaticResource IconTrash}" Content="删除" Click="DeletePolicy_Click" Margin="0,0,8,8" />
+                        </WrapPanel>
+                        <Grid><Border Style="{StaticResource Card}" Padding="0" BorderThickness="0">
+                            <ListBox x:Name="PolicyList" ScrollViewer.HorizontalScrollBarVisibility="Disabled" SelectionChanged="PolicyList_SelectionChanged"><ListBox.ItemTemplate><DataTemplate><TextBlock Text="{Binding Name}" TextWrapping="Wrap" /></DataTemplate></ListBox.ItemTemplate></ListBox>
+                        </Border></Grid>
+                    </DockPanel>
+
+                    <ScrollViewer Grid.Column="1" Margin="20,0,0,0" VerticalScrollBarVisibility="Auto" Grid.Row="1">
+                        <StackPanel x:Name="PolicyForm" IsEnabled="False">
+
+                            <Grid><Border Style="{StaticResource Card}">
+                                <StackPanel>
+                                    <TextBlock Style="{StaticResource H2}" Text="动作" />
+
+                                    <WrapPanel Margin="0,16,0,0">
+                                        <StackPanel Style="{StaticResource FieldBlock}">
+                                            <TextBlock Style="{StaticResource FieldLabel}" Margin="0,0,0,8" Text="策略名" />
+                                            <TextBox x:Name="PolicyNameBox" />
+                                        </StackPanel>
+                                    </WrapPanel>
+
+                                    <TextBlock Style="{StaticResource FieldLabel}" Margin="0,0,0,8" Text="命中后执行（可多选）" />
+                                    <StackPanel>
+                                        <CheckBox x:Name="ActionNotifyCheck" Content="通知（托盘气泡）" Margin="0,0,0,9" Checked="Action_Changed" Unchecked="Action_Changed" />
+                                        <CheckBox x:Name="ActionMinimizeCheck" Content="最小化窗口" Margin="0,0,0,9" Checked="Action_Changed" Unchecked="Action_Changed" />
+                                        <CheckBox x:Name="ActionCloseCheck" Margin="0,0,0,9" Checked="Action_Changed" Unchecked="Action_Changed"><TextBlock Text="关闭窗口（Electron 应用关窗后进程还在，重开很快）" TextWrapping="Wrap" /></CheckBox>
+                                        <CheckBox x:Name="ActionKillCheck" Content="杀掉进程（唯一真正拦得住的）" Margin="0,0,0,9" Checked="Action_Changed" Unchecked="Action_Changed" />
+                                        <CheckBox x:Name="ActionLogCheck" Content="只记录到日志" Checked="Action_Changed" Unchecked="Action_Changed" />
+                                    </StackPanel>
+                                </StackPanel>
+                            </Border></Grid>
+
+                            <!-- 只在策略确实会提醒时才出现 -->
+                            <Grid Margin="0,18,0,0"><Border x:Name="AlertStylePanel" Style="{StaticResource Card}" Visibility="Collapsed">
+                                <StackPanel>
+                                    <TextBlock Style="{StaticResource H2}" Text="提醒方式" />
+                                    <ComboBox x:Name="AlertStyleBox" Width="260" HorizontalAlignment="Left" Margin="0,14,0,0" DisplayMemberPath="Display" />
+                                    <TextBlock Style="{StaticResource Hint}" Margin="0,10,0,0" Text="托盘气泡：不打扰，但容易忽略。全屏提醒：盖住整个屏幕直到你点「知道了」，用来强行打断注意力。" />
+                                </StackPanel>
+                            </Border></Grid>
+
+                            <Grid Margin="0,18,0,0"><Border Style="{StaticResource Card}">
+                                <StackPanel>
+                                    <TextBlock Style="{StaticResource H2}" Text="时机" />
+
+                                    <WrapPanel Margin="0,16,0,0">
+                                        <!-- 只在对窗口做动作时才有意义：没有动作就没有什么可等的 -->
+                                        <StackPanel x:Name="GracePanel" Style="{StaticResource FieldBlock}">
+                                            <TextBlock Style="{StaticResource FieldLabel}" Margin="0,0,0,8" Text="先通知，等几秒后再动手" />
+                                            <WrapPanel>
+                                                <TextBox x:Name="GraceBox" Style="{StaticResource NumericBox}" />
+                                                <TextBlock Text="秒（0 = 立即）" VerticalAlignment="Center" Margin="8,0,0,0" Foreground="{StaticResource TextSecondary}" />
+                                            </WrapPanel>
+                                        </StackPanel>
+
+                                        <StackPanel Style="{StaticResource FieldBlock}">
+                                            <TextBlock Style="{StaticResource FieldLabel}" Margin="0,0,0,8" Text="冷却：动作后几秒内不重复" />
+                                            <WrapPanel>
+                                                <TextBox x:Name="CooldownBox" Style="{StaticResource NumericBox}" />
+                                                <TextBlock Text="秒" VerticalAlignment="Center" Margin="8,0,0,0" Foreground="{StaticResource TextSecondary}" />
+                                            </WrapPanel>
+                                        </StackPanel>
+
+                                        <StackPanel Style="{StaticResource FieldBlock}">
+                                            <TextBlock Style="{StaticResource FieldLabel}" Margin="0,0,0,8" Text="去抖：连续命中几次才动作" />
+                                            <TextBox x:Name="DebounceBox" Style="{StaticResource NumericBox}" HorizontalAlignment="Left" />
+                                        </StackPanel>
+                                    </WrapPanel>
+                                </StackPanel>
+                            </Border></Grid>
+
+                            <!-- 只对"提醒型"策略有意义：已经动手拿走窗口的策略不需要重复提醒 -->
+                            <Grid Margin="0,18,0,0"><Border x:Name="RepeatPanel" Style="{StaticResource Card}" Visibility="Collapsed">
+                                <StackPanel>
+                                    <TextBlock Style="{StaticResource H2}" Text="重复提醒" />
+                                    <WrapPanel Margin="0,16,0,0">
+                                        <StackPanel Style="{StaticResource FieldBlock}">
+                                            <TextBlock Style="{StaticResource FieldLabel}" Margin="0,0,0,8" Text="间隔（秒）" />
+                                            <TextBox x:Name="RepeatBox" Style="{StaticResource NumericBox}" HorizontalAlignment="Left" />
+                                        </StackPanel>
+                                    </WrapPanel>
+                                    <TextBlock Style="{StaticResource Hint}" Margin="0,0,0,0" Text="0 = 不重复，一个页面只提醒一次。大于 0 时：那个页面停留在前台期间，每隔这么多秒再提醒你一次；你切走再切回来也会立刻提醒。（300 秒 = 5 分钟）" />
+                                </StackPanel>
+                            </Border></Grid>
+
+                            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,16,0,8">
+                                <TextBlock x:Name="PolicyDirtyMark" Style="{StaticResource DirtyMark}" Text="● 有未保存的修改" />
+                                <Button x:Name="ApplyPolicyButton" Content="应用修改" Style="{StaticResource PrimaryIconButton}" Tag="{StaticResource IconCheck}" Click="ApplyPolicy_Click" />
+                            </StackPanel>
+                        </StackPanel>
+                    </ScrollViewer>
+                </Grid>
+            </TabItem>
+
+            <!-- ============ 时间表 ============ -->
+            <TabItem>
+                <TabItem.Header>
+                    <StackPanel Orientation="Horizontal">
+                        <Path Style="{StaticResource NavIcon}" Stroke="{StaticResource TintIndigo}" Data="M 3.2,4.3 H 12.8 V 13.4 H 3.2 Z M 3.2,7.2 H 12.8 M 5.9,2.5 V 5.1 M 10.1,2.5 V 5.1" />
+                        <TextBlock FontSize="15" Text="时间表" VerticalAlignment="Center" />
+                    </StackPanel>
+                </TabItem.Header>
+
+                <Grid Margin="32,26,32,26"><Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /></Grid.RowDefinitions>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="0.3*" MinWidth="190" MaxWidth="250" />
+                        <ColumnDefinition Width="*" />
+                    </Grid.ColumnDefinitions>
+
+                    <StackPanel Grid.ColumnSpan="2" Margin="0,0,0,24"><TextBlock Style="{StaticResource H1}" Text="时间表" /><TextBlock Style="{StaticResource Hint}" Margin="0,7,0,0" Text="规则在哪些日子、哪些时段生效。" /></StackPanel><DockPanel Grid.Row="1">
+                        
+                        
+                        <WrapPanel DockPanel.Dock="Bottom" Margin="0,12,0,0">
+                            <Button Style="{StaticResource IconButton}" Tag="{StaticResource IconPlus}" Content="新建" Click="NewSchedule_Click" Margin="0,0,8,8" />
+                            <Button Style="{StaticResource IconButton}" Tag="{StaticResource IconTrash}" Content="删除" Click="DeleteSchedule_Click" Margin="0,0,8,8" />
+                        </WrapPanel>
+                        <Grid><Border Style="{StaticResource Card}" Padding="0" BorderThickness="0">
+                            <ListBox x:Name="ScheduleList" ScrollViewer.HorizontalScrollBarVisibility="Disabled" SelectionChanged="ScheduleList_SelectionChanged"><ListBox.ItemTemplate><DataTemplate><TextBlock Text="{Binding Id}" TextWrapping="Wrap" /></DataTemplate></ListBox.ItemTemplate></ListBox>
+                        </Border></Grid>
+                    </DockPanel>
+
+                    <ScrollViewer Grid.Column="1" Margin="20,0,0,0" VerticalScrollBarVisibility="Auto" Grid.Row="1">
+                        <StackPanel x:Name="ScheduleForm" IsEnabled="False">
+
+                            <Grid><Border Style="{StaticResource Card}">
+                                <StackPanel>
+                                    <WrapPanel>
+                                        <StackPanel Style="{StaticResource FieldBlock}">
+                                            <TextBlock Style="{StaticResource FieldLabel}" Margin="0,0,0,8" Text="名称（规则里靠它引用）" />
+                                            <TextBox x:Name="ScheduleIdBox" />
+                                        </StackPanel>
+                                    </WrapPanel>
+
+                                    <TextBlock Style="{StaticResource FieldLabel}" Margin="0,0,0,8" Text="生效的星期（全不勾 = 每天）" />
+                                    <WrapPanel>
+                                        <CheckBox x:Name="DayMonCheck" Content="周一" Margin="0,0,16,8" />
+                                        <CheckBox x:Name="DayTueCheck" Content="周二" Margin="0,0,16,8" />
+                                        <CheckBox x:Name="DayWedCheck" Content="周三" Margin="0,0,16,8" />
+                                        <CheckBox x:Name="DayThuCheck" Content="周四" Margin="0,0,16,8" />
+                                        <CheckBox x:Name="DayFriCheck" Content="周五" Margin="0,0,16,8" />
+                                        <CheckBox x:Name="DaySatCheck" Content="周六" Margin="0,0,16,8" />
+                                        <CheckBox x:Name="DaySunCheck" Content="周日" Margin="0,0,16,8" />
+                                    </WrapPanel>
+
+                                    <TextBlock Style="{StaticResource FieldLabel}" Margin="0,16,0,8" Text="时间窗（每行一条，格式 09:00-18:00；留空 = 全天）" />
+                                    <TextBox x:Name="ScheduleWindowsBox" Height="96" AcceptsReturn="True" VerticalScrollBarVisibility="Auto" Style="{StaticResource MonoTextBox}" />
+                                    <TextBlock Style="{StaticResource Hint}" Margin="0,8,0,0" Text="跨夜也支持，比如 22:00-06:00。然后在「规则」页的「生效时间表」里选它，那条规则就只在这些时段生效。" />
+                                </StackPanel>
+                            </Border></Grid>
+
+                            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,16,0,8">
+                                <TextBlock x:Name="ScheduleDirtyMark" Style="{StaticResource DirtyMark}" Text="● 有未保存的修改" />
+                                <Button x:Name="ApplyScheduleButton" Content="应用修改" Style="{StaticResource PrimaryIconButton}" Tag="{StaticResource IconCheck}" Click="ApplySchedule_Click" />
+                            </StackPanel>
+                        </StackPanel>
+                    </ScrollViewer>
+                </Grid>
+            </TabItem>
+
+            <!-- ============ 大语言模型 ============ -->
+            <TabItem>
+                <TabItem.Header>
+                    <StackPanel Orientation="Horizontal">
+                        <Path Style="{StaticResource NavIcon}" Stroke="{StaticResource TintPlum}"
+                              Data="M 8,2.2 L 9.3,6.3 L 13.4,7.6 L 9.3,8.9 L 8,13 L 6.7,8.9 L 2.6,7.6 L 6.7,6.3 Z" />
+                        <TextBlock Text="大语言模型" VerticalAlignment="Center" />
+                    </StackPanel>
+                </TabItem.Header>
+
+                <Grid Margin="32,26,32,26">
+
+                    <!-- ==================== 列表（默认看到的就是它） ==================== -->
+                    <DockPanel x:Name="ModelListView">
+                        <Grid DockPanel.Dock="Top">
+                            <StackPanel>
+                                <TextBlock Style="{StaticResource H1}" Text="大语言模型" />
+                                <TextBlock Style="{StaticResource Hint}" Margin="0,7,0,0"
+                                           Text="给「模型监督」用的服务商。启用了哪一个，判定就走哪一个。" />
+                            </StackPanel>
+
+                            <Button x:Name="NewModelButton" HorizontalAlignment="Right" VerticalAlignment="Top"
+                                    Style="{StaticResource PrimaryIconButton}" Tag="{StaticResource IconPlus}"
+                                    Content="添加服务商" Click="NewModel_Click" />
+                        </Grid>
+
+                        <TextBlock DockPanel.Dock="Top" x:Name="ModelStatusText" Style="{StaticResource Hint}" Margin="0,14,0,0" />
+
+                        <TextBlock DockPanel.Dock="Bottom" x:Name="ModelEmptyHint" Style="{StaticResource Hint}"
+                                   Margin="0,16,0,0" Visibility="Collapsed"
+                                   Text="还没有服务商。「模型监督」那种规则现在不会生效 —— 点右上角「添加服务商」，把 API key 和请求地址填进去。" />
+
+                        <ScrollViewer Margin="0,16,0,0" VerticalScrollBarVisibility="Auto">
+                            <!--
+                                不用 ListBox：这一页的动作都挂在每一行的按钮上，“选中某一行”只会多出第二个
+                                高亮（选中一个底色、启用另一个底色），反而说不清哪个才是“正在用”的。
+                            -->
+                            <ItemsControl x:Name="ModelList">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <Border x:Name="Row" CornerRadius="8" Padding="14,12" Margin="0,0,0,10"
+                                                Background="{StaticResource Surface}"
+                                                BorderBrush="{StaticResource Hairline}" BorderThickness="1"
+                                                SnapsToDevicePixels="True">
+                                            <Grid>
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="Auto" />
+                                                    <ColumnDefinition Width="*" />
+                                                    <ColumnDefinition Width="Auto" />
+                                                </Grid.ColumnDefinitions>
+
+                                                <!-- 方形头像块：名字的第一个字。比一个通用图标更能一眼认出来是谁。 -->
+                                                <Border Width="38" Height="38" CornerRadius="9"
+                                                        Background="{StaticResource TintPlumSurface}"
+                                                        VerticalAlignment="Center">
+                                                    <TextBlock Text="{Binding Initial}" FontSize="17"
+                                                               Foreground="{StaticResource TintPlum}"
+                                                               HorizontalAlignment="Center" VerticalAlignment="Center" />
+                                                </Border>
+
+                                                <StackPanel Grid.Column="1" Margin="14,0,14,0" VerticalAlignment="Center">
+                                                    <StackPanel Orientation="Horizontal">
+                                                        <TextBlock Text="{Binding Name}" FontSize="15"
+                                                                   Foreground="{StaticResource TextPrimary}"
+                                                                   VerticalAlignment="Center" />
+                                                        <Border x:Name="ActiveBadge" CornerRadius="4" Padding="7,1" Margin="10,1,0,0"
+                                                                Background="{StaticResource SelectionFill}" Visibility="Collapsed">
+                                                            <TextBlock Text="使用中" FontSize="12"
+                                                                       Foreground="{StaticResource SelectionInk}" />
+                                                        </Border>
+                                                        <Border x:Name="IdleBadge" CornerRadius="4" Padding="7,1" Margin="10,1,0,0"
+                                                                Background="{StaticResource Fill}" Visibility="Collapsed">
+                                                            <TextBlock Text="未启用" FontSize="12"
+                                                                       Foreground="{StaticResource TextTertiary}" />
+                                                        </Border>
+                                                    </StackPanel>
+
+                                                    <TextBlock Text="{Binding Endpoint}" Style="{StaticResource Caption}"
+                                                               Margin="0,4,0,0" TextTrimming="CharacterEllipsis" />
+                                                </StackPanel>
+
+                                                <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
+                                                    <Button Style="{StaticResource ToolIconButton}" Tag="{StaticResource IconPlay}"
+                                                            Content="测试" Margin="0,0,6,0" Click="TestModelRow_Click" />
+                                                    <Button Style="{StaticResource ToolIconButton}" Tag="{StaticResource IconEdit}"
+                                                            Content="编辑" Margin="0,0,6,0" Click="EditModelRow_Click" />
+                                                    <Button Style="{StaticResource ToolIconButton}" Tag="{StaticResource IconTrash}"
+                                                            Content="删除" Click="DeleteModelRow_Click" />
+                                                </StackPanel>
+                                            </Grid>
+                                        </Border>
+
+                                        <DataTemplate.Triggers>
+                                            <!-- 正在用的那一行整行淡绿：一屏扫过去就知道判定走的是谁。 -->
+                                            <DataTrigger Binding="{Binding IsActive}" Value="True">
+                                                <Setter TargetName="Row" Property="Background" Value="{StaticResource SelectionFill}" />
+                                                <Setter TargetName="Row" Property="BorderBrush" Value="{StaticResource SelectionFill}" />
+                                                <Setter TargetName="ActiveBadge" Property="Visibility" Value="Visible" />
+                                            </DataTrigger>
+                                            <DataTrigger Binding="{Binding IsActive}" Value="False">
+                                                <Setter TargetName="IdleBadge" Property="Visibility" Value="Visible" />
+                                            </DataTrigger>
+                                        </DataTemplate.Triggers>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </ScrollViewer>
+                    </DockPanel>
+
+                    <!-- ==================== 编辑（点「编辑」整页切换过来） ==================== -->
+                    <ScrollViewer x:Name="ModelEditView" Visibility="Collapsed" VerticalScrollBarVisibility="Auto">
+                        <StackPanel>
+
+                            <StackPanel Orientation="Horizontal" Margin="0,0,0,16">
+                                <Button Style="{StaticResource ToolIconButton}" Tag="{StaticResource IconBack}"
+                                        Content="返回列表" Click="CancelModel_Click" />
+                                <TextBlock x:Name="ModelEditTitle" Style="{StaticResource H1}" Margin="14,0,0,0"
+                                           VerticalAlignment="Center" Text="编辑服务商" />
+                            </StackPanel>
+
+                            <Border Style="{StaticResource Card}">
+                                <StackPanel>
+                                    <TextBlock Style="{StaticResource H2}" Text="基本" />
+
+                                    <WrapPanel Margin="0,16,0,0">
+                                        <StackPanel Style="{StaticResource FieldBlock}">
+                                            <TextBlock Style="{StaticResource FieldLabel}" Margin="0,0,0,8" Text="名称" />
+                                            <TextBox x:Name="ModelNameBox" />
+                                        </StackPanel>
+                                        <StackPanel Style="{StaticResource FieldBlock}">
+                                            <TextBlock Style="{StaticResource FieldLabel}" Margin="0,0,0,8" Text="备注（可选）" />
+                                            <TextBox x:Name="ModelNoteBox" />
+                                        </StackPanel>
+                                    </WrapPanel>
+
+                                    <CheckBox x:Name="ModelActiveCheck" Content="启用这个服务商（模型监督走它）" />
+                                    <TextBlock Style="{StaticResource Hint}" Margin="0,8,0,0"
+                                               Text="同一时间只有一个能用。取消启用等于停掉模型监督 —— 那算放宽，保护开着的时候要令牌。" />
+                                </StackPanel>
+                            </Border>
+
+                            <Border Style="{StaticResource Card}" Margin="0,18,0,0">
+                                <StackPanel>
+                                    <TextBlock Style="{StaticResource H2}" Text="凭据" />
+
+                                    <WrapPanel Margin="0,16,0,0">
+                                        <StackPanel Style="{StaticResource FieldBlock}" Width="340">
+                                            <TextBlock Style="{StaticResource FieldLabel}" Margin="0,0,0,8" Text="API key" />
+                                            <PasswordBox x:Name="ModelKeySecret" Style="{StaticResource MonoPasswordBox}" />
+                                            <TextBox x:Name="ModelKeyBox" Style="{StaticResource MonoTextBox}" Visibility="Collapsed" />
+                                            <CheckBox x:Name="ModelKeyToggle" Content="显示" Margin="0,8,0,0"
+                                                      Click="ModelKeyToggle_Click" />
+                                        </StackPanel>
+
+                                        <StackPanel Style="{StaticResource FieldBlock}" Width="340">
+                                            <TextBlock Style="{StaticResource FieldLabel}" Margin="0,0,0,8" Text="官网链接（可选）" />
+                                            <TextBox x:Name="ModelWebsiteBox" Style="{StaticResource MonoTextBox}" />
+                                            <Button Style="{StaticResource ToolIconButton}" Tag="{StaticResource IconExternal}"
+                                                    Content="打开官网" HorizontalAlignment="Left" Margin="0,8,0,0" Click="OpenWebsite_Click" />
+                                        </StackPanel>
+                                    </WrapPanel>
+
+                                    <TextBlock Style="{StaticResource Caption}" Margin="0,2,0,0" TextWrapping="Wrap"
+                                               Text="key 是明文存在配置文件里的 —— 那个文件本来就只有管理员能写，而坐在机器前的人就是 key 的主人，加密它只会变成把密码贴在旁边。" />
+                                </StackPanel>
+                            </Border>
+
+                            <Border Style="{StaticResource Card}" Margin="0,18,0,0">
+                                <StackPanel>
+                                    <TextBlock Style="{StaticResource H2}" Text="连接" />
+
+                                    <WrapPanel Margin="0,16,0,0">
+                                        <StackPanel Style="{StaticResource FieldBlock}">
+                                            <TextBlock Style="{StaticResource FieldLabel}" Margin="0,0,0,8" Text="上游格式" />
+                                            <ComboBox x:Name="ModelFormatBox" DisplayMemberPath="Display" SelectionChanged="ModelFormat_Changed" />
+                                        </StackPanel>
+                                    </WrapPanel>
+
+                                    <TextBlock Style="{StaticResource FieldLabel}" Margin="0,2,0,8" Text="请求地址（完整 URL，含路径）" />
+                                    <TextBox x:Name="ModelEndpointBox" Style="{StaticResource MonoTextBox}"
+                                             TextChanged="ModelEndpoint_Changed" LostFocus="ModelEndpoint_LostFocus" />
+                                    <TextBlock x:Name="ModelEndpointHint" Style="{StaticResource Caption}" Margin="0,6,0,0" TextWrapping="Wrap" />
+                                </StackPanel>
+                            </Border>
+
+                            <Border Style="{StaticResource Card}" Margin="0,18,0,0">
+                                <StackPanel>
+                                    <TextBlock Style="{StaticResource H2}" Text="模型" />
+
+                                    <WrapPanel Margin="0,16,0,0">
+                                        <StackPanel Style="{StaticResource FieldBlock}" Width="340">
+                                            <TextBlock Style="{StaticResource FieldLabel}" Margin="0,0,0,8" Text="模型名" />
+                                            <!-- 可编辑下拉：平时手填，取到列表之后从这里挑。 -->
+                                            <ComboBox x:Name="ModelCodePicker" IsEditable="True" />
+                                        </StackPanel>
+                                    </WrapPanel>
+
+                                    <TextBlock Style="{StaticResource FieldLabel}" Margin="0,2,0,8" Text="模型列表地址（可选）" />
+                                    <Grid>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*" />
+                                            <ColumnDefinition Width="Auto" />
+                                        </Grid.ColumnDefinitions>
+                                        <TextBox x:Name="ModelListEndpointBox" Style="{StaticResource MonoTextBox}" TextChanged="ModelListEndpoint_Changed" />
+                                        <Button x:Name="FetchModelsButton" Grid.Column="1" Margin="8,0,0,0" Style="{StaticResource ToolIconButton}"
+                                                Tag="{StaticResource IconRefresh}" Content="获取模型列表" Click="FetchModels_Click" />
+                                    </Grid>
+                                    <TextBlock x:Name="ModelListHint" Style="{StaticResource Caption}" Margin="0,6,0,0" TextWrapping="Wrap" />
+                                </StackPanel>
+                            </Border>
+
+                            <StackPanel Orientation="Horizontal" Margin="0,18,0,8">
+                                <TextBlock x:Name="ModelDirtyMark" Style="{StaticResource DirtyMark}" Text="● 有未保存的修改" />
+                                <Button x:Name="ModelTestButton" Style="{StaticResource IconButton}" Tag="{StaticResource IconPlay}"
+                                        Content="测试连接" Margin="0,0,8,0" Click="TestModel_Click" />
+                                <Button x:Name="ApplyModelButton" Style="{StaticResource PrimaryIconButton}" Tag="{StaticResource IconCheck}"
+                                        Content="保存" Margin="0,0,8,0" Click="ApplyModel_Click" />
+                                <Button x:Name="CancelModelButton" Style="{StaticResource IconButton}" Content="取消" Click="CancelModel_Click" />
+                            </StackPanel>
+
+                            <TextBlock x:Name="ModelTestResult" Style="{StaticResource Hint}" Margin="0,4,0,8" />
+                        </StackPanel>
+                    </ScrollViewer>
+                </Grid>
+            </TabItem>
+
+            <!-- ============ 日志 ============ -->
+            <TabItem>
+                <TabItem.Header>
+                    <StackPanel Orientation="Horizontal">
+                        <Path Style="{StaticResource NavIcon}" Stroke="{StaticResource TintSlate}" Data="M 4.2,2.6 H 9.5 L 12.2,5.3 V 13.4 H 4.2 Z M 9.5,2.6 V 5.3 H 12.2 M 6.3,8.3 H 10.2 M 6.3,10.9 H 10.2" />
+                        <TextBlock FontSize="15" Text="日志" VerticalAlignment="Center" />
+                    </StackPanel>
+                </TabItem.Header>
+
+                <DockPanel Margin="32,26,32,26">
+                    <TextBlock DockPanel.Dock="Top" Style="{StaticResource H1}" Text="日志" />
+                    <TextBlock DockPanel.Dock="Top" Style="{StaticResource Hint}" Margin="0,7,0,16" Text="监控判定和动作的历史记录。" />
+
+                    <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="0,0,0,14">
+                        <Button Style="{StaticResource IconButton}" Tag="{StaticResource IconRefresh}" Content="刷新" Click="RefreshLog_Click" Margin="0,0,8,0" />
+                        <Button Style="{StaticResource IconButton}" Tag="{StaticResource IconFolder}" Content="打开日志目录" Click="OpenLogFolder_Click" Margin="0,0,14,0" />
+                        <TextBlock x:Name="LogPathText" VerticalAlignment="Center" Style="{StaticResource MonoCaption}" />
+                    </StackPanel>
+
+                    <Grid><Border Style="{StaticResource Card}" Padding="8">
+                        <ListBox x:Name="LogList" FontFamily="{StaticResource MonoFont}" FontSize="11.5" />
+                    </Border></Grid>
+                </DockPanel>
+            </TabItem>
+
+            <!-- ============ 诊断 ============ -->
+            <TabItem>
+                <TabItem.Header>
+                    <StackPanel Orientation="Horizontal">
+                        <Path Style="{StaticResource NavIcon}" Stroke="{StaticResource TintGreen}" Data="M 1.7,8.4 H 4.9 L 6.5,5 L 9,11.9 L 10.6,8.4 H 14.3" />
+                        <TextBlock FontSize="15" Text="诊断" VerticalAlignment="Center" />
+                    </StackPanel>
+                </TabItem.Header>
+
+                <!--
+                    整页滚动，不跟窗口高度抢空间。
+
+                    以前用的是 `*` 行：读取那张卡占满剩余高度。加了「模型监督自检」之后，
+                    新卡按内容要高度，`*` 就被压成一条缝 —— 正文框没了，而"测试读取"的结果
+                    其实是画在那条缝里的，看着就像点了没反应。两张卡各自给个高度、装不下就滚，
+                    谁也不会挤掉谁。
+                -->
+                <ScrollViewer Margin="32,26,32,26" VerticalScrollBarVisibility="Auto">
+                    <StackPanel>
+                        <TextBlock Style="{StaticResource H1}" Text="诊断" />
+                        <TextBlock Style="{StaticResource Hint}" Margin="0,7,0,16" Text="配规则之前先在这里测一下：把目标应用放到前台，选中它，点「测试读取」。读得到标题 / 网址 / 正文才能拦得住；读不到说明这个应用暂时监控不了。" />
+
+                        <WrapPanel Margin="0,0,0,16">
+                            <ComboBox x:Name="DiagWindowPicker" Width="420" DisplayMemberPath="Display" />
+                            <Button Style="{StaticResource ToolIconButton}" Tag="{StaticResource IconRefresh}" Content="刷新" Margin="8,0,0,0" Click="RefreshDiagWindows_Click" />
+                            <CheckBox x:Name="DiagBodyCheck" Content="读取正文" VerticalAlignment="Center" Margin="16,0,0,0" />
+                            <Button Style="{StaticResource PrimaryIconButton}" Tag="{StaticResource IconPlay}" Content="测试读取" Margin="16,0,0,0" Click="RunDiagnose_Click" />
+                        </WrapPanel>
+
+                        <Border Style="{StaticResource Card}">
+                            <StackPanel>
+                                <TextBlock x:Name="DiagVerdictText" FontSize="14" FontWeight="Normal" />
+                                <TextBlock x:Name="DiagDetailText" Margin="0,7,0,0" TextWrapping="Wrap" Style="{StaticResource MonoCaption}" />
+                                <!-- Height="Auto" 抵消基础样式里给单行框的固定高度。 -->
+                                <TextBox x:Name="DiagBodyBox" IsReadOnly="True" AcceptsReturn="True" TextWrapping="Wrap"
+                                         Style="{StaticResource MonoTextBox}" Height="Auto" Margin="0,12,0,0"
+                                         MinHeight="180" MaxHeight="360" VerticalScrollBarVisibility="Auto" />
+                            </StackPanel>
+                        </Border>
+
+                        <!-- 模型监督自检。放在读取测试下面：读取那一段是"能不能看见"，
+                             这一段是"看见了之后会不会判、会不会拦"—— 配了模型监督却不生效时，
+                             这两件事必须分得开，不然只能靠猜。 -->
+                        <Border Style="{StaticResource Card}" Margin="0,18,0,0">
+                            <StackPanel>
+                                <TextBlock Style="{StaticResource H2}" Text="模型监督自检" />
+                                <TextBlock Style="{StaticResource Hint}" Margin="0,7,0,0"
+                                           Text="拿现在真实读到的内容现场问一次模型，把每一步都摊开：窗口匹不匹配、读到了什么、规则对不对、模型怎么说、监控现在记的是什么。不写配置，也不影响正在跑的监控。" />
+
+                                <WrapPanel Margin="0,14,0,0">
+                                    <TextBlock Text="目标：" VerticalAlignment="Center" Foreground="{StaticResource TextSecondary}" />
+                                    <ComboBox x:Name="DiagModelTargetPicker" Width="260" Margin="8,0,12,0" DisplayMemberPath="DisplayName" />
+                                <Button x:Name="DiagModelButton" Style="{StaticResource PrimaryIconButton}" Tag="{StaticResource IconPlay}"
+                                        Content="测一次模型监督" Click="RunModelDiagnose_Click" />
+                                <Button Style="{StaticResource ToolIconButton}" Tag="{StaticResource IconRefresh}" Content="刷新窗口"
+                                        Margin="8,0,0,0" Click="RefreshDiagWindows_Click" />
+                            </WrapPanel>
+
+                            <TextBox x:Name="DiagModelBox" IsReadOnly="True" AcceptsReturn="True" TextWrapping="Wrap"
+                                     Style="{StaticResource MonoTextBox}" Margin="0,14,0,0" Height="Auto"
+                                     MinHeight="160" MaxHeight="360" VerticalScrollBarVisibility="Auto" />
+                        </StackPanel>
+                    </Border>
+                    </StackPanel>
+                </ScrollViewer>
+            </TabItem>
+        </TabControl>
+
+        <Border Grid.Row="2" Height="12" Background="{StaticResource KnotBand}" />
+
+        <StatusBar Grid.Row="3">
+            <StatusBarItem>
+                <TextBlock x:Name="StatusBarText" />
+            </StatusBarItem>
+            <Separator Style="{StaticResource StatusBarSeparator}" />
+            <!-- 保存的结果单独一格：监控状态每秒都在刷这行，混在一起的话消息一秒就没了。
+                 放在状态栏而不是某个页签里，是因为"保存有没有成功"跟你在哪个页签上无关。 -->
+            <StatusBarItem>
+                <TextBlock x:Name="SaveStatusText" FontWeight="SemiBold" />
+            </StatusBarItem>
+        </StatusBar>
+    </Grid>
+</Window>

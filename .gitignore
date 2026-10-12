@@ -1,0 +1,39 @@
+# 构建产物。这两个**不带**前导斜杠是故意的：每个子项目都有自己的 bin/obj。
+bin/
+obj/
+
+# Visual Studio / Rider
+.vs/
+.idea/
+*.user
+*.suo
+
+# ---- 下面这些只可能出现在仓库根目录，所以一律加前导斜杠锚定 ----
+#
+# 这一条踩过坑：写成 `vault/` 的话，gitignore 会匹配任意层级的同名目录 ——
+# 于是 `src/Sentinel.Core/Vault/`（保险箱的源码）被一起排除了，导出的仓库编译不了。
+# 注意 gitignore 的行尾 `#` **不是**注释，是模式的一部分，所以注释只能独占一行。
+
+# publish.ps1 的默认输出
+/publish/
+
+# publish.ps1 -OutDir
+/Sentinel-stage/
+
+# make-setup.ps1 -OutDir（以及同名 .zip）
+/Sentinel-Release/
+/Sentinel-Release.zip
+
+# 预览工具截的 PNG，随手一跑就重来一遍
+/preview-shots/
+
+# 本机运行数据：安装目录里那些，不在源码里
+/logs/
+/audit/
+/vault/
+/.sentinel-install
+/.vault-guard
+/.vault-seal
+/.watchdog-alive
+/.maintenance
+*.jsonl

@@ -1,0 +1,72 @@
+{
+  "Version": 1,
+  "Targets": [
+    {
+      "Id": "deepseek-harness",
+      "DisplayName": "DeepSeek Harness（内置浏览器）",
+      "ProcessNames": ["DeepSeek Harness"],
+      "Enabled": true,
+      "Reader": {
+        "ScanUrl": true,
+        "ScanTitle": true,
+        "ScanBody": false,
+        "IntervalMs": 2000,
+        "MaxBodyChars": 4096
+      },
+      "Rules": [
+        {
+          "Id": "r-url-bilibili",
+          "Name": "URL 含 bilibili",
+          "Enabled": true,
+          "PolicyId": "notify-then-minimize",
+          "Priority": 10,
+          "Match": {
+            "Type": "Keyword",
+            "Fields": ["Url"],
+            "Patterns": ["bilibili"],
+            "CaseSensitive": false
+          }
+        },
+        {
+          "Id": "r-title-video",
+          "Name": "标题含「直播」",
+          "Enabled": true,
+          "PolicyId": "notify-then-minimize",
+          "Priority": 5,
+          "Match": {
+            "Type": "Keyword",
+            "Fields": ["Title"],
+            "Patterns": ["直播"],
+            "CaseSensitive": false
+          }
+        }
+      ]
+    }
+  ],
+  "Policies": [
+    {
+      "Id": "notify-then-minimize",
+      "Name": "通知 5 秒后最小化",
+      "Actions": ["Notify", "Minimize"],
+      "GraceSeconds": 5,
+      "CooldownSeconds": 60,
+      "DebounceCount": 1
+    }
+  ],
+  "Schedules": [],
+  "Protection": {
+    "Enabled": false,
+    "Mode": "None",
+    "SecretHash": null,
+    "DelaySeconds": 0
+  },
+  "Logging": {
+    "LogDirectory": "%TEMP%\\Sentinel\\logs",
+    "LogBodyText": false,
+    "LogUrlHash": true
+  },
+  "Ui": {
+    "Locale": "zh-CN",
+    "DryRun": true
+  }
+}

@@ -1,0 +1,31 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <UseWPF>true</UseWPF>
+    <AssemblyName>Sentinel.Setup</AssemblyName>
+    <RootNamespace>Sentinel.Setup</RootNamespace>
+    <ApplicationIcon>..\..\assets\sentinel.ico</ApplicationIcon>
+
+    <!--
+      安装程序必须提权：它要往安装目录写、给目录设 ACL、注册 Windows 服务。
+      写在这一层而不是"点按钮时再 runas"，是因为后面那些动作全都需要管理员，
+      分两半做只会让日志和错误处理变复杂。
+    -->
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!--
+      和主程序用同一份主题（仓库根目录那一份），所以两个窗口长得一样。
+      这个工程**故意不引用 Sentinel.Core / Agent**：安装程序要能在什么都没装的机器上跑起来，
+      依赖主程序是会把这件事弄拧的。
+    -->
+    <Resource Include="..\..\assets\sentinel.ico" Link="Assets\sentinel.ico" />
+    <Page Include="..\..\theme\SentinelTheme.xaml" Link="Theme\SentinelTheme.xaml" />
+  </ItemGroup>
+
+</Project>
