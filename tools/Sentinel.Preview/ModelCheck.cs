@@ -50,6 +50,9 @@ internal static class ModelCheck
             Width = 1180,
             Height = 800,
         };
+        // 静默返回已经改成弹窗了：这个检查点按钮时不一定会选中条目，弹真框会把检查挂死。
+        window.RefuseToUser = message => Console.WriteLine($"[被拒] {message.Split(char.MinValue)[0]}");
+
 
         window.Show();
         Pump();

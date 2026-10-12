@@ -317,8 +317,8 @@
                                 <!-- 自动换行。左栏只有 250px，「暂停 10 分钟」这个标签一长，
                                      横向 StackPanel 就会把最后一个按钮顶出栏外 —— 而且没有滚动条能救。 -->
                                 <WrapPanel>
-                                    <Button Style="{StaticResource IconButton}" Tag="{StaticResource IconPlus}" Content="新建" Click="NewRule_Click" Margin="0,0,8,8" />
-                                    <Button Style="{StaticResource IconButton}" Tag="{StaticResource IconTrash}" Content="删除" Click="DeleteRule_Click" Margin="0,0,8,8" />
+                                    <Button x:Name="NewRuleButton" Style="{StaticResource IconButton}" Tag="{StaticResource IconPlus}" Content="新建" Click="NewRule_Click" Margin="0,0,8,8" />
+                                    <Button x:Name="DeleteRuleButton" Style="{StaticResource IconButton}" Tag="{StaticResource IconTrash}" Content="删除" Click="DeleteRule_Click" Margin="0,0,8,8" />
                                     <Button x:Name="PauseButton" Style="{StaticResource IconButton}" Tag="{StaticResource IconPause}" Content="暂停" Click="PauseRule_Click" Margin="0,0,8,8" />
                                 </WrapPanel>
                                 <TextBlock x:Name="PauseText" Style="{StaticResource Hint}" Margin="0,2,0,0" />

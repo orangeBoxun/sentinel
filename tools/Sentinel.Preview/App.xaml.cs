@@ -79,6 +79,13 @@ public partial class App : Application
         }
 
         // 看门狗被停掉会不会封印保险箱 —— 两个方向都要验（误判的代价很贵）。
+        // 点新建、填内容、点应用 —— 这条路能不能存下去。
+        if (e.Args.Length >= 2 && e.Args[0] == "--newrule-check")
+        {
+            Shutdown(RunCheck(() => NewRuleCheck.Run(e.Args[1])));
+            return;
+        }
+
         if (e.Args.Length >= 2 && e.Args[0] == "--watchdog-check")
         {
             Shutdown(RunCheck(() => WatchdogCheck.Run(e.Args[1])));
@@ -152,6 +159,10 @@ public partial class App : Application
             }
 
             var demoWindow = new MainWindow(demoState);
+
+            // 静默返回改成弹窗了：没选中条目时点「应用」会弹一个真框，那会把检查挂死。
+            demoWindow.RefuseToUser = message => Console.WriteLine($"[被拒] {message.Split(char.MinValue)[0]}");
+
             Offscreen(demoWindow, 1180, 800);
             demoWindow.Show();
             Pump();

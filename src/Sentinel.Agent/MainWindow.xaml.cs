@@ -664,6 +664,19 @@ public partial class MainWindow : Window
     private void ShowRefusal(string message) =>
         MessageBox.Show(this, message, "这次修改没有保存", MessageBoxButton.OK, MessageBoxImage.Warning);
 
+    /// <summary>
+    /// 点了按钮，却没有可操作的对象 —— 说出来，别静默返回。
+    ///
+    /// <para>
+    /// 这些地方原来都是一句 <c>return;</c>：没选中条目的时候点「新建」或者「应用修改」，
+    /// 不保存、不提示，而屏幕上还留着你打的字。人看到的是"点了没反应""存不进去"，
+    /// 程序里却一次异常都没有 —— 比报错难查得多。（真出过一次：界面里配好了 http，
+    /// 文件里一个字都没有。）
+    /// </para>
+    /// </summary>
+    private void SayNothingSelected(string what) =>
+        RefuseToUser($"没有选中任何{what}，所以这次操作没有发生，什么都不会改。\n\n先在列表里点中一条，再试一次。");
+
     // ------------------------------------------------------------------ 解锁令牌
 
     /// <summary>
@@ -1126,7 +1139,10 @@ public partial class MainWindow : Window
             return;
 
         if (_selectedTarget is null)
+        {
+            SayNothingSelected("目标");
             return;
+        }
 
         if (MessageBox.Show($"删除目标「{_selectedTarget.DisplayName}」？", "Sentinel",
                 MessageBoxButton.OKCancel, MessageBoxImage.Question) != MessageBoxResult.OK)
@@ -1146,7 +1162,10 @@ public partial class MainWindow : Window
     private bool ApplyTargetForm()
     {
         if (_selectedTarget is null)
+        {
+            SayNothingSelected("目标");
             return false;
+        }
 
         _selectedTarget.DisplayName = TargetNameBox.Text.Trim();
         _selectedTarget.ProcessNames = TargetProcessBox.Text
@@ -1321,7 +1340,10 @@ public partial class MainWindow : Window
             return;
 
         if (_selectedTarget is null)
+        {
+            SayNothingSelected("目标");
             return;
+        }
 
         var rule = new Rule
         {
@@ -1353,7 +1375,10 @@ public partial class MainWindow : Window
             return;
 
         if (_selectedTarget is null || _selectedRule is null)
+        {
+            SayNothingSelected("规则");
             return;
+        }
 
         _selectedTarget.Rules.Remove(_selectedRule);
         SaveAndReport();
@@ -1378,7 +1403,10 @@ public partial class MainWindow : Window
     {
 
         if (_selectedRule is null)
+        {
+            SayNothingSelected("规则");
             return false;
+        }
 
         _selectedRule.Name = RuleNameBox.Text.Trim();
         _selectedRule.Enabled = RuleEnabledCheck.IsChecked == true;
@@ -1571,7 +1599,10 @@ public partial class MainWindow : Window
             return;
 
         if (_selectedPolicy is null)
+        {
+            SayNothingSelected("策略");
             return;
+        }
 
         var inUse = _state.Config.Targets
             .SelectMany(t => t.Rules)
@@ -1594,7 +1625,10 @@ public partial class MainWindow : Window
     private bool ApplyPolicyForm()
     {
         if (_selectedPolicy is null)
+        {
+            SayNothingSelected("策略");
             return false;
+        }
 
         _selectedPolicy.Name = PolicyNameBox.Text.Trim();
 
@@ -2043,7 +2077,10 @@ public partial class MainWindow : Window
     private bool ApplyModelForm()
     {
         if (_selectedModel is null)
+        {
+            SayNothingSelected("服务商");
             return false;
+        }
 
         // 如果这个条目还不在列表里（新建的），第一次保存时加进去。
         var isNew = !_state.Config.Models.Contains(_selectedModel);
@@ -2270,7 +2307,10 @@ public partial class MainWindow : Window
             return;
 
         if (_selectedSchedule is null)
+        {
+            SayNothingSelected("计划");
             return;
+        }
 
         var inUse = _state.Config.Targets
             .SelectMany(t => t.Rules)
@@ -2293,7 +2333,10 @@ public partial class MainWindow : Window
     private bool ApplyScheduleForm()
     {
         if (_selectedSchedule is null)
+        {
+            SayNothingSelected("计划");
             return false;
+        }
 
         var windows = ParseWindows(ScheduleWindowsBox.Text, out var error);
         if (error is not null)
