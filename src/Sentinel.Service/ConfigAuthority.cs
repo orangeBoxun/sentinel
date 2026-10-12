@@ -196,7 +196,14 @@ public sealed class ConfigAuthority
 
             if (verdict == UnlockVerdict.Refused)
             {
-                error = reason;
+                // 光说"会放宽限制"等于让人对着屏幕猜是哪一处（用户已经为这句话猜过好几轮：
+                // "我又没改什么" —— 而真正放宽的往往是顺手动的另一处）。判定器本来就知道，说出来。
+                var whys = ConfigRelaxation.Explain(previous, incoming);
+
+                error = whys.Count == 0
+                    ? reason
+                    : $"{reason} 放宽的地方：{string.Join("；", whys)}";
+
                 unlockRequest = unlock.CreateRequest(incoming);
                 return false;
             }
@@ -486,8 +493,11 @@ public sealed class ConfigAuthority
         if (ConfigRelaxation.Classify(sealedConfig, loaded) != ChangeDirection.Relaxing)
             return loaded;
 
+        var whys = ConfigRelaxation.Explain(sealedConfig, loaded);
+
         refusal =
             $"{path} 里的配置比上次认可的更宽松，且没有解锁令牌 —— 已忽略，继续按上次认可的配置运行。" +
+            (whys.Count == 0 ? "" : $"放宽的地方：{string.Join("；", whys)}。") +
             "如果这是你自己改的，请从界面里修改以取得解锁码。";
 
         return sealedConfig;

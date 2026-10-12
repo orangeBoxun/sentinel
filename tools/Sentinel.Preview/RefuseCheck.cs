@@ -81,7 +81,15 @@ internal static class RefuseCheck
             };
 
             var refused = false;
-            window.RefuseToUser = _ => refused = true;   // 别让模态框把检查挂住
+            var refusalText = "";
+
+            // 别让模态框把检查挂住；顺手把它的原话记下来 —— 拒绝时说不说得清"是哪一处放宽"，
+            // 是这条检查要盯的第二件事。
+            window.RefuseToUser = message =>
+            {
+                refused = true;
+                refusalText = message;
+            };
 
             window.Show();
             Pump();
@@ -120,6 +128,18 @@ internal static class RefuseCheck
 
             Report(ref ok, "界面的优先级回到了配置里的值", priority.Text == "0",
                 $"框里是「{priority.Text}」");
+
+            Console.WriteLine();
+            Console.WriteLine("拒绝时说的原话：");
+            Console.WriteLine("  " + refusalText.Replace("\n", " / "));
+            Console.WriteLine();
+
+            // 光说"会放宽限制"等于让人猜。判定器本来就知道是哪一处 —— 它得说出来。
+            Report(ref ok, "拒绝时说清了是哪一处放宽",
+                refusalText.Contains("优先级") || refusalText.Contains("放宽的地方"),
+                refusalText.Contains("优先级")
+                    ? "说了：句子里点出了「优先级」"
+                    : $"没说：{refusalText}");
 
             Report(ref ok, "界面的内容也回到了配置里的值",
                 patterns.Text.Replace(Environment.NewLine, "/") == "old",

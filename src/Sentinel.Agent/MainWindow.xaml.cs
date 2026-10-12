@@ -633,6 +633,7 @@ public partial class MainWindow : Window
 
             RefuseToUser(
                 "这次修改会放宽限制，所以没有保存。\n\n" +
+                Widenings() +
                 "放宽需要一份在别的设备上用私钥签发的令牌。解锁码已经放在「概览」页上了 —— " +
                 "复制它，拿去签名，再把令牌贴回来。\n\n" +
                 "界面已经还原成实际生效的样子。那次改动本身留着，贴回令牌就会重新提交。");
@@ -674,6 +675,29 @@ public partial class MainWindow : Window
     /// 文件里一个字都没有。）
     /// </para>
     /// </summary>
+    /// <summary>
+    /// "放宽的是哪一处" —— 直接来自服务判定时给出的说法。
+    ///
+    /// <para>
+    /// 没有它的时候，这里只能说一句"会放宽限制"，而人看着屏幕上自己刚动的那一处，
+    /// 只会想"我没改什么不该改的啊"。真正放宽的往往是顺手动的另一处：改了优先级、
+    /// 取消勾选了一个字段、把匹配内容删了一条。
+    /// </para>
+    /// </summary>
+    private string Widenings()
+    {
+        const string marker = "放宽的地方：";
+
+        var error = _state.SaveError;
+
+        if (string.IsNullOrWhiteSpace(error))
+            return "";
+
+        var at = error.IndexOf(marker, StringComparison.Ordinal);
+
+        return at < 0 ? "" : error[(at + marker.Length)..].Trim() + "\n\n";
+    }
+
     /// <summary>
     /// 把手里选中的条目认回**当前**那份配置上去。
     ///
@@ -784,7 +808,7 @@ public partial class MainWindow : Window
             UnlockPanelHint.Text = closing
                 ? "要关掉保护，" + SigningHint
                   + "关掉之后所有放宽都不再需要令牌；想重新开启，把公钥文件放回配置目录就行。"
-                : "刚才那次改动没有被采用，界面已经还原成现在实际生效的样子 —— 你可以在别的页签上确认。"
+                : Widenings() + "刚才那次改动没有被采用，界面已经还原成现在实际生效的样子 —— 你可以在别的页签上确认。"
                   + "要接着做，" + SigningHint
                   + "令牌对应的是那一次的具体改动，而且只能用一次。";
         }
