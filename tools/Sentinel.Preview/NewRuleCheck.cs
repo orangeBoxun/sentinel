@@ -161,6 +161,41 @@ internal static class NewRuleCheck
                 newest is not null && newest.Match.Patterns.Count == 2,
                 $"rule-2 的内容={string.Join("/", newest?.Match.Patterns ?? new List<string>())}");
 
+            // ---- 后台把配置整体换掉之后，界面还存得进去吗 ----
+            //
+            // 这一步才是用户那台机器上的真实情形。心跳发现"版本变了"（**包括界面自己刚存的那次**
+            // 也会让版本变），MonitorHost 就在后台叫一句 ReloadConfig —— 整份配置换成一批新对象，
+            // 而界面毫不知情：列表和 _selectedRule 指的还是上一批。
+            // 于是表单写进的是个孤儿对象，保存时发出去的却是新配置，改动不在里面。
+            Console.WriteLine();
+            Console.WriteLine("── 让配置在后台被重载一次（心跳发现版本变了时就是这么做的）──");
+            state.ReloadConfig();
+            Console.WriteLine($"重载之后 _state.Config 里的目标数={state.Config.Targets.Count}（换了新对象）");
+            Pump();
+
+            var beforeCount = OnDisk(configPath).Targets[0].Rules.Count;
+
+            newButton.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
+            Pump();
+
+            Console.WriteLine($"点过新建：文件里 {OnDisk(configPath).Targets[0].Rules.Count} 条，界面上 {list.Items.Count} 条");
+
+            patterns.Text = "http";
+            Pump();
+            apply.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
+            Pump();
+
+            var afterReload = OnDisk(configPath).Targets[0].Rules;
+            Console.WriteLine($"点过应用：文件里 {afterReload.Count} 条：{string.Join(" / ", afterReload.Select(r => $"{r.Id}[{string.Join(",", r.Match.Patterns)}]"))}");
+            Console.WriteLine($"界面上还是 {list.Items.Count} 条，选中的第 {list.SelectedIndex} 条");
+
+            Report(ref ok, "重载之后新建的规则也写进了文件", afterReload.Count > beforeCount,
+                $"新建前 {beforeCount} 条，现在 {afterReload.Count} 条");
+
+            Report(ref ok, "重载之后填的内容也写进了文件",
+                afterReload.Any(r => r.Match.Patterns.Contains("http") && r.Id.StartsWith("rule")),
+                $"带 http 的规则：{string.Join("/", afterReload.Where(r => r.Match.Patterns.Contains("http")).Select(r => r.Id))}");
+
             window.Close();
 
             Console.WriteLine();

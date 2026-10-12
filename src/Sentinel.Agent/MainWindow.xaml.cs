@@ -674,6 +674,62 @@ public partial class MainWindow : Window
     /// 文件里一个字都没有。）
     /// </para>
     /// </summary>
+    /// <summary>
+    /// 把手里选中的条目认回**当前**那份配置上去。
+    ///
+    /// <para>
+    /// 心跳发现配置版本变了 —— <b>包括界面自己刚存成功的那一次</b> —— 后台就会叫一次
+    /// <c>ReloadConfig()</c>，把整份配置换成一批新对象（那条路只在监控线程上走，界面收不到通知）。
+    /// 界面手里的 <c>_selectedRule</c> 这时候就成了**孤儿**：往它里面写，而保存时发出去的却是
+    /// 新配置 —— 改动不在里面，服务看"什么都没变"，照样回一句成功。屏幕上写着"✓ 配置已保存"，
+    /// 文件里一个字都没有。用户看到的就是"界面上加了没效果"。
+    /// </para>
+    /// <para>
+    /// 每个会改动配置的地方都先过这一道。认不回来（真被别处删了）就让它变成 null，
+    /// 由 <see cref="SayNothingSelected"/> 出声 —— 不许静默写进废纸。
+    /// </para>
+    /// </summary>
+    private void ReattachSelection()
+    {
+        _selectedTarget = Current(_selectedTarget, _state.Config.Targets, t => t.Id);
+
+        // 规则在目标里面找：**跨目标按 Id 认会认错人** —— 这份配置里 codex 和 doubao
+        // 各有一条都叫 rule 的规则。
+        _selectedRule = _selectedTarget is null
+            ? null
+            : Current(_selectedRule, _selectedTarget.Rules, r => r.Id);
+
+        _selectedPolicy = Current(_selectedPolicy, _state.Config.Policies, p => p.Id);
+        _selectedSchedule = Current(_selectedSchedule, _state.Config.Schedules, s => s.Id);
+        // 服务商例外：**新建一个服务商时它按设计还没进配置**（要等点「应用修改」才进去），
+        // 所以"配置里没有"不等于"这个是孤儿" —— 那种情况必须留着手里的新对象，
+        // 否则刚填好的地址和钥匙会被这一句丢掉。
+        _selectedModel = Current(_selectedModel, _state.Config.Models, m => m.Id, keepIfMissing: true);
+    }
+
+    private static T? Current<T>(
+        T? held, IEnumerable<T> pool, Func<T, string> id, bool keepIfMissing = false) where T : class
+    {
+        if (held is null)
+            return null;
+
+        foreach (var candidate in pool)
+        {
+            if (ReferenceEquals(candidate, held))
+                return held;   // 还在里面 —— 一个字节都不用动
+        }
+
+        var wanted = id(held);
+        var found = pool.FirstOrDefault(candidate => id(candidate) == wanted);
+
+        // 认回来的是"同一个条目、换了对象"的孤儿就换掉；Id 根本不在配置里，那是两回事：
+        // 要么它刚被别处删了（清空，让 SayNothingSelected 出声），要么它本来就是个还没保存的新条目。
+        if (found is not null)
+            return found;
+
+        return keepIfMissing ? held : null;
+    }
+
     private void SayNothingSelected(string what) =>
         RefuseToUser($"没有选中任何{what}，所以这次操作没有发生，什么都不会改。\n\n先在列表里点中一条，再试一次。");
 
@@ -1137,6 +1193,7 @@ public partial class MainWindow : Window
     {
         if (!ConfirmLeaveDirtyForm())
             return;
+        ReattachSelection();
 
         if (_selectedTarget is null)
         {
@@ -1161,6 +1218,7 @@ public partial class MainWindow : Window
     /// <summary>把表单写进选中的目标并保存。返回"真的存下去了没有"。</summary>
     private bool ApplyTargetForm()
     {
+        ReattachSelection();
         if (_selectedTarget is null)
         {
             SayNothingSelected("目标");
@@ -1338,6 +1396,7 @@ public partial class MainWindow : Window
     {
         if (!ConfirmLeaveDirtyForm())
             return;
+        ReattachSelection();
 
         if (_selectedTarget is null)
         {
@@ -1373,6 +1432,7 @@ public partial class MainWindow : Window
     {
         if (!ConfirmLeaveDirtyForm())
             return;
+        ReattachSelection();
 
         if (_selectedTarget is null || _selectedRule is null)
         {
@@ -1401,6 +1461,7 @@ public partial class MainWindow : Window
 
     private bool ApplyRuleForm()
     {
+        ReattachSelection();
 
         if (_selectedRule is null)
         {
@@ -1597,6 +1658,7 @@ public partial class MainWindow : Window
     {
         if (!ConfirmLeaveDirtyForm())
             return;
+        ReattachSelection();
 
         if (_selectedPolicy is null)
         {
@@ -1624,6 +1686,7 @@ public partial class MainWindow : Window
 
     private bool ApplyPolicyForm()
     {
+        ReattachSelection();
         if (_selectedPolicy is null)
         {
             SayNothingSelected("策略");
@@ -1745,6 +1808,15 @@ public partial class MainWindow : Window
 
     private void DeleteModel(ModelProvider provider)
     {
+        // 同上：列表里的那一行也可能是上一批配置里的对象，按 Id 认回当前这份。
+        provider = Current(provider, _state.Config.Models, m => m.Id);
+
+        if (provider is null)
+        {
+            RefreshModelList();
+            return;
+        }
+
         if (MessageBox.Show(this, $"删除服务商「{provider.Name}」？", "Sentinel",
                 MessageBoxButton.OKCancel, MessageBoxImage.Question) != MessageBoxResult.OK)
             return;
@@ -2076,6 +2148,7 @@ public partial class MainWindow : Window
 
     private bool ApplyModelForm()
     {
+        ReattachSelection();
         if (_selectedModel is null)
         {
             SayNothingSelected("服务商");
@@ -2305,6 +2378,7 @@ public partial class MainWindow : Window
     {
         if (!ConfirmLeaveDirtyForm())
             return;
+        ReattachSelection();
 
         if (_selectedSchedule is null)
         {
@@ -2332,6 +2406,7 @@ public partial class MainWindow : Window
 
     private bool ApplyScheduleForm()
     {
+        ReattachSelection();
         if (_selectedSchedule is null)
         {
             SayNothingSelected("计划");
