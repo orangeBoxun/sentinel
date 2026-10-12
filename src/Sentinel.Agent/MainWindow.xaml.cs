@@ -298,6 +298,82 @@ public partial class MainWindow : Window
             form.Refresh();
     }
 
+    /// <summary>
+    /// 刷新之后把选中项和表单认回来。
+    ///
+    /// <para>
+    /// <b>关键在于：刷新之后配置可能已经被整体换成新读出来的对象了</b>（被拒之后服务会把存下来的
+    /// 那份重新读一遍），所以 <c>_selectedTarget</c> 这些字段指向的都是上一份配置里的对象 ——
+    /// 它们不在新列表里，选不回去，表单也就空了、或者留着被拒的那份值。
+    /// 所以按 Id 在新配置里重新认一遍，再让列表和新对象对上，那几个"选中项变了"的处理函数
+    /// 就会把表单按配置重填 —— 这正是我们要的。
+    /// </para>
+    /// </summary>
+    private void RestoreSelection(Selection selection)
+    {
+        var ruleId = selection.Rule;
+        var policyId = selection.Policy;
+        var scheduleId = selection.Schedule;
+        var modelId = selection.Model;
+
+        var target = _state.Config.Targets.FirstOrDefault(t => t.Id == selection.Target);
+        var rule = target?.Rules.FirstOrDefault(r => r.Id == ruleId);
+        var policy = _state.Config.Policies.FirstOrDefault(p => p.Id == policyId);
+        var schedule = _state.Config.Schedules.FirstOrDefault(s => s.Id == scheduleId);
+        var model = _state.Config.Models.FirstOrDefault(m => m.Id == modelId);
+
+        // **只认回来原来选过的那些，别的一律不许碰。** 无条件地写一遍会把"刷新自己填好的"
+        // 又清成 null：首次加载时 selection 里全是空的，于是这里把下拉框刚选上的目标抹掉 ——
+        // 而从那以后每次记下的都是"什么都没选"，保存被拒之后的还原就整段跳过了。
+        if (selection.Target is not null)
+        {
+            _selectedTarget = target;
+            _selectedRule = rule;
+        }
+
+        if (selection.Policy is not null)
+            _selectedPolicy = policy;
+
+        if (selection.Schedule is not null)
+            _selectedSchedule = schedule;
+
+        if (selection.Model is not null)
+            _selectedModel = model;
+
+        Programmatic(() =>
+        {
+            // 按"原来选过谁"逐项认回来。**没选过的别碰** —— 首次加载时什么都没选，
+            // 无条件地选一遍会把刷新刚填好的列表清空（规则列表尤其：它的 ItemsSource 跟着目标走）。
+            if (selection.Target is not null)
+            {
+                // 这一步会重绑 TargetList，并触发"选中项变了"把目标表单填一遍。
+                RefreshTargetList();
+                TargetList.SelectedItem = target;
+
+                RuleList.ItemsSource = target?.Rules;
+                RuleList.SelectedItem = rule;
+            }
+
+            if (selection.Policy is not null)
+            {
+                RefreshPolicyList();
+                PolicyList.SelectedItem = policy;
+            }
+
+            if (selection.Schedule is not null)
+            {
+                RefreshScheduleList();
+                ScheduleList.SelectedItem = schedule;
+            }
+        });
+
+        // 大语言模型那一页是"列表 + 整页编辑"，表单不在列表旁边 —— 重新打开一次编辑页，
+        // 它自己会按配置填。
+        if (model is not null && ModelEditView.Visibility == Visibility.Visible)
+            OpenModelEditor(model);
+
+    }
+
     // ---- 每个表单"现在长什么样"。要把「应用修改」读到的字段**全部**写进来。
 
     private string TargetSignature() => string.Join('\u001f',
@@ -370,6 +446,10 @@ public partial class MainWindow : Window
 
     private void RefreshAll()
     {
+        // 先记下"原来选的是谁"：刷新之后配置可能已经是另一批对象了（被拒之后服务会把存下来的
+        // 那份重新读一遍），旧对象不在新的列表里，选中项会全丢 —— 表单也就没了内容。
+        var selection = Selected();
+
         ConfigPathText.Text = _state.ConfigPath;
         DryRunCheck.IsChecked = _state.Config.Ui.DryRun;
         RefreshTargetList();
@@ -382,7 +462,15 @@ public partial class MainWindow : Window
         RefreshUnlockPanel();
         RefreshPauseStatus();
         UpdateStatus();
+
+        RestoreSelection(selection);
     }
+
+    /// <summary>现在选中的是哪些条目。只记 Id —— 对象随时可能被换掉。</summary>
+    private sealed record Selection(string? Target, string? Rule, string? Policy, string? Schedule, string? Model);
+
+    private Selection Selected() =>
+        new(_selectedTarget?.Id, _selectedRule?.Id, _selectedPolicy?.Id, _selectedSchedule?.Id, _selectedModel?.Id);
 
     private void UpdateStatus()
     {
@@ -961,7 +1049,10 @@ public partial class MainWindow : Window
     {
         // 先记住要选谁：重绑 ItemsSource 会把选中项打到 -1，而那次 SelectionChanged 会把
         // _selectedTarget 清成 null —— 之后再问"原来选的是谁"就晚了。
-        var wanted = _selectedTarget;
+        // 按 Id 认回来：配置被整体换过之后（保存被拒时就是这样），手里的对象已经不在新列表里。
+        var wanted = _selectedTarget is { } current
+            ? _state.Config.Targets.FirstOrDefault(t => t.Id == current.Id)
+            : null;
 
         Programmatic(() =>
         {
@@ -970,7 +1061,7 @@ public partial class MainWindow : Window
 
             // 选回来。不选的话，光点一下「应用修改」就把正在编辑的东西从眼前弄丢了（以前就是这样）：
             // 选中项掉到 -1，表单跟着变灰。
-            if (wanted is not null && _state.Config.Targets.Contains(wanted))
+            if (wanted is not null)
                 TargetList.SelectedItem = wanted;
         });
     }
@@ -1097,13 +1188,18 @@ public partial class MainWindow : Window
 
     private void RefreshRuleTargetPicker()
     {
-        var previous = _selectedTarget;
+        // **按 Id 认回来，不能按对象。** 保存被拒之后配置会被整体换成新读出来的对象，手里那个
+        // 已经不在新列表里了 —— 把它塞进下拉框只会得到"什么都没选"，而那个 handler 会把
+        // _selectedTarget 清成 null（规则是挂在目标下面的，于是规则也跟着丢了）。
+        var wanted = _selectedTarget is { } current
+            ? _state.Config.Targets.FirstOrDefault(t => t.Id == current.Id)
+            : null;
 
         Programmatic(() =>
         {
             RuleTargetPicker.ItemsSource = null;
             RuleTargetPicker.ItemsSource = _state.Config.Targets;
-            RuleTargetPicker.SelectedItem = previous ?? _state.Config.Targets.FirstOrDefault();
+            RuleTargetPicker.SelectedItem = wanted ?? _state.Config.Targets.FirstOrDefault();
         });
     }
 
@@ -1196,6 +1292,7 @@ public partial class MainWindow : Window
         RuleType_Changed(this, new RoutedEventArgs());
 
         _ruleForm.Reload();
+
     }
 
     private void RefreshPolicyChoices()
@@ -1279,6 +1376,7 @@ public partial class MainWindow : Window
 
     private bool ApplyRuleForm()
     {
+
         if (_selectedRule is null)
             return false;
 
@@ -1987,7 +2085,7 @@ public partial class MainWindow : Window
         if (_selectedModel is null)
             CloseModelEditor(force: true);
         else
-            _modelForm.Reload();
+            OpenModelEditor(_selectedModel);   // 按配置重填，不是只重置基线
 
         return false;
     }

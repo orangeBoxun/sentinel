@@ -130,15 +130,16 @@ public sealed class DailyAuditLog : IAuditLog, IDisposable
         lock (_lock)
         {
             var day = entry.Timestamp.ToString("yyyyMMdd");
+            var log = _current;   // 用局部变量：编译器不会跨 if 追踪字段的非空性
 
             if (_day != day)
             {
                 _current?.Dispose();
-                _current = new JsonLinesAuditLog(PathFor(entry.Timestamp));
+                log = _current = new JsonLinesAuditLog(PathFor(entry.Timestamp));
                 _day = day;
             }
 
-            _current.Write(entry);
+            log!.Write(entry);
         }
     }
 

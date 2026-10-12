@@ -253,7 +253,26 @@ internal static class DirtyCheck
                       && form.IsEnabled;
 
         Console.WriteLine();
-        return clean && dirty && applied;
+
+        // ---- 多行「匹配内容」会不会被吞掉
+        //
+        // 用户报过这个："界面上明明写了 7 行，存下去只有 2 行 —— 所以我配的 http 不起作用。"
+        // 直接验它：往那个框里打 7 行、点应用，然后去文件里数。
+        var wanted = new[] { "bilibili", "douyin", "http", "a", "b", "c", "d" };
+
+        ((TextBox)window.FindName("RulePatternsBox")!).Text = string.Join(Environment.NewLine, wanted);
+        Settle();
+        button.RaiseEvent(new RoutedEventArgs(ButtonClick.Event));
+        Pump();
+
+        var saved = OnDisk(state.ConfigPath).Targets[0].Rules[0].Match.Patterns;
+
+        Console.WriteLine($"打了 {wanted.Length} 行、点应用之后，文件里有 {saved.Count} 条：{string.Join(" / ", saved)}");
+
+        var kept = saved.Count == wanted.Length && wanted.All(saved.Contains);
+
+        Console.WriteLine();
+        return clean && dirty && applied && kept;
     }
 
     private static string Show(TextBlock mark) =>

@@ -71,6 +71,13 @@ public partial class App : Application
             return;
         }
 
+        // 保存被拒之后，界面有没有回到"实际生效的样子"。
+        if (e.Args.Length >= 2 && e.Args[0] == "--refuse-check")
+        {
+            Shutdown(RunCheck(() => RefuseCheck.Run(e.Args[1])));
+            return;
+        }
+
         // 看门狗被停掉会不会封印保险箱 —— 两个方向都要验（误判的代价很贵）。
         if (e.Args.Length >= 2 && e.Args[0] == "--watchdog-check")
         {
