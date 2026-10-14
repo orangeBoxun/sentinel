@@ -44,6 +44,9 @@ public sealed class VaultSession : IDisposable
     /// <summary>这次打开用的监护码；<see cref="Lock"/> 会把它清掉。</summary>
     private string? _guardianCode;
 
+    /// <summary>抹掉封印标记的办法（见构造函数）。</summary>
+    private readonly Func<string, string?>? _clearSeal;
+
     private readonly string _configPath;
     private readonly Func<GuardStatus>? _extraCheck;
 
@@ -56,14 +59,21 @@ public sealed class VaultSession : IDisposable
     /// in the Agent this asks whether the Service is still there and still answering. It can add a
     /// seal but never remove one.
     /// </param>
+    /// <param name="clearSeal">
+    /// 抹掉封印标记的办法。**由外面注入**，因为标记在配置目录里、那个目录对普通用户只读 ——
+    /// 只有服务（SYSTEM）删得掉。传 null 时退回直接删（测试、或者自己就有权限的场合）。
+    /// 返回 null 表示成功，否则是给人看的原因。
+    /// </param>
     public VaultSession(
         string configPath,
         Func<GuardStatus>? extraCheck = null,
-        Func<byte[]?>? machineSecret = null)
+        Func<byte[]?>? machineSecret = null,
+        Func<string, string?>? clearSeal = null)
     {
         _configPath = configPath;
         _extraCheck = extraCheck;
         _machineSecret = machineSecret;
+        _clearSeal = clearSeal;
 
         _keys = VaultKeys.Load(VaultGuard.KeysPathFor(configPath));
         Phase = _keys is null ? VaultPhase.NotSetUp : VaultPhase.Locked;
@@ -346,7 +356,23 @@ public sealed class VaultSession : IDisposable
         _keys!.ResetToNormal();
         _keys.Save(VaultGuard.KeysPathFor(_configPath));
 
-        VaultGuard.ClearSeal(_configPath);
+        // 标记只能由服务抹掉，而这里**不吞失败**：以前吞掉它，于是"点了解除封印、界面还是
+        // 已封印"，屏幕上没有任何东西说明为什么 —— 用户只会觉得按钮坏了。
+        if (_clearSeal is not null && _guardianCode is not null)
+        {
+            if (_clearSeal(_guardianCode) is { } error)
+            {
+                return VaultResult.Fail(
+                    $"封印标记抹不掉：{error}"
+                    + "（保险箱本身没问题，但标记还留着，所以看起来仍是已封印 —— "
+                    + "把 Sentinel 服务起回来再点一次。）");
+            }
+        }
+        else
+        {
+            VaultGuard.ClearSeal(_configPath);
+        }
+
         SealReason = null;
         Guard = GuardStatus.Intact;
 

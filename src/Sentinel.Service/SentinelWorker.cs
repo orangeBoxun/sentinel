@@ -412,6 +412,27 @@ public sealed class SentinelWorker : BackgroundService
 
                 return IpcResponse.Failure(enableError ?? "enable refused");
 
+            case Ipc.ClearSeal:
+            {
+                var keys = VaultKeys.Load(VaultGuard.KeysPathFor(_config.Path));
+
+                if (keys?.UnlockWithGuardianCode(request.Payload ?? "") is null)
+                {
+                    _log.LogWarning("拒绝解除封印：监护码不对");
+                    return IpcResponse.Failure("监护码不对。");
+                }
+
+                // 服务是唯一删得掉这个文件的身份（配置目录对普通用户只读）。
+                VaultGuard.ClearSeal(_config.Path);
+
+                _log.LogInformation("封印已解除（监护人解锁码）");
+
+                AuditWriter().Write(new AuditEntry(DateTimeOffset.Now, "(vault)", null, "unsealed", null,
+                    "保险箱封印已用监护码解除"));
+
+                return IpcResponse.Success();
+            }
+
             case Ipc.VaultSecret:
             {
                 // 保险箱的密码那道门绑着这份秘密。服务是唯一该拿到它的人（也确实是唯一收得紧权限的：

@@ -86,6 +86,23 @@ internal static class VaultSecretCheck
             var opened = session.UnlockWithPassword("这是一个足够长的密码");
             Report(ref ok, "建完能用密码打开（说明绑定是通的）", opened.Ok, opened.Error ?? "打开了");
 
+            // ---- 抹封印标记这条命令：只有监护码对才认
+            //
+            // 标记在配置目录里，Agent（普通用户）删不掉 —— 所以它得请服务来删。而"请服务删"
+            // 必须先验监护码，否则那就是一条"谁喊一声都能解开封印"的后门。
+            var sealPath = VaultGuard.SealPathFor(configPath);
+            File.WriteAllText(sealPath, """{"Reason":"检查写的","At":"2026-01-01 00:00:00"}""");
+
+            var wrong = state.ClearSeal(VaultCrypto.NewGuardianCode());
+            Report(ref ok, "监护码不对时拒绝解除封印（这条是后门防线）",
+                wrong is not null && File.Exists(sealPath),
+                wrong is null ? "居然认了！" : $"被拒了：{wrong}");
+
+            var right = state.ClearSeal(code);
+            Report(ref ok, "监护码对时服务会把标记抹掉",
+                right is null && !File.Exists(sealPath),
+                right ?? "抹掉了");
+
             // 服务那边不该抱怨"收不紧" —— 收不紧只会在它自己试过之后才说
             // （控制台里以普通身份跑时它不试，因为收完它就自己都读不了了）。
             var complained = serviceLog.Any(l => l.Contains("权限没收紧"));

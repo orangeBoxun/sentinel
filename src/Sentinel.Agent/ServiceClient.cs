@@ -169,6 +169,16 @@ public sealed class ServiceClient
         }
     }
 
+    /// <summary>
+    /// 请服务抹掉封印标记。**要带监护码** —— 服务会自己验一遍（那条命令不带码就是一个后门）。
+    /// </summary>
+    public bool TryClearSeal(string guardianCode, out string? error)
+    {
+        var reply = Send(new IpcRequest(Ipc.ClearSeal, guardianCode));
+        error = reply.Ok ? null : reply.Error ?? "服务拒绝了。";
+        return reply.Ok;
+    }
+
     public bool TryKill(int processId, out string? error)
     {
         var reply = Send(new IpcRequest(Ipc.RequestKill, processId.ToString()));

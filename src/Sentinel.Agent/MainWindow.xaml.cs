@@ -429,7 +429,7 @@ public partial class MainWindow : Window
     {
         try
         {
-            using var session = new VaultSession(_state.ConfigPath, null, _state.VaultSecret);
+            using var session = new VaultSession(_state.ConfigPath, null, _state.VaultSecret, _state.ClearSeal);
 
             VaultStatusText.Text = session.IsSealed
                 ? $"状态：已封印 —— {session.SealReason}\n只有监护码B 能打开。"

@@ -536,6 +536,58 @@ public class VaultSessionTests : IDisposable
         Assert.True(second.UnlockWithPassword("补设的足够长的密码").Ok);
     }
 
+    /// <summary>
+    /// 抹标记这件事**由外面来做**（标记在配置目录里，普通用户删不掉，只有服务删得掉）——
+    /// 这里验它被叫到了、带的是监护码。
+    /// </summary>
+    [Fact]
+    public void Unsealing_asks_the_injected_way_to_clear_the_marker()
+    {
+        var code = VaultCrypto.NewGuardianCode();
+        var asked = new List<string>();
+
+        using (var session = Session())
+            Assert.True(session.Create("一个足够长的密码", code).Ok);
+
+        VaultGuard.Seal(_config, "测试");
+
+        using var recovered = new VaultSession(_config, null, () => Secret, guardianCode =>
+        {
+            asked.Add(guardianCode);
+            VaultGuard.ClearSeal(_config);   // 假装服务把它抹掉了
+            return null;
+        });
+
+        Assert.True(recovered.UnlockWithGuardianCode(code).Ok);
+        Assert.True(recovered.UnsealKeepingPassword().Ok);
+
+        Assert.Single(asked);
+        Assert.Null(VaultGuard.ReadSeal(_config));
+        Assert.False(recovered.IsSealed);
+    }
+
+    /// <summary>抹不掉就如实说 —— 以前吞掉失败，屏幕上只会是"点了解除封印，还是已封印"。</summary>
+    [Fact]
+    public void A_marker_that_cannot_be_cleared_is_reported()
+    {
+        var code = VaultCrypto.NewGuardianCode();
+
+        using (var session = Session())
+            Assert.True(session.Create("一个足够长的密码", code).Ok);
+
+        VaultGuard.Seal(_config, "测试");
+
+        using var recovered = new VaultSession(_config, null, () => Secret, _ => "服务没在运行");
+
+        Assert.True(recovered.UnlockWithGuardianCode(code).Ok);
+
+        var unsealed = recovered.UnsealKeepingPassword();
+
+        Assert.False(unsealed.Ok);
+        Assert.Contains("服务", unsealed.Error ?? "");
+        Assert.True(recovered.IsSealed);      // 标记还在，所以确实还是已封印
+    }
+
     [Fact]
     public void Changing_the_password_retires_the_stored_key()
     {

@@ -303,6 +303,10 @@ public sealed class AgentState : IDisposable
     /// </summary>
     public byte[]? VaultSecret() => Service.TryGetVaultSecret(out var secret) ? secret : null;
 
+    /// <summary>请服务抹掉封印标记（只有它删得掉那个文件）。</summary>
+    public string? ClearSeal(string guardianCode) =>
+        Service.TryClearSeal(guardianCode, out var error) ? null : error ?? "服务拒绝了。";
+
     public IReadOnlyList<ConfigIssue> Validate() => ConfigValidator.Validate(Config);
 
     // ------------------------------------------------------------------ 暂停

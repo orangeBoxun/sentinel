@@ -86,6 +86,18 @@ public static class Ipc
     /// </summary>
     public const string VaultSecret = "vault-secret";
 
+    /// <summary>
+    /// 抹掉封印标记。**必须带上监护码** —— 服务会自己验一遍再抹。
+    ///
+    /// <para>
+    /// 为什么得走服务：标记在配置目录里，而那个目录对普通用户只读（Agent 以用户身份跑，
+    /// 删不掉它 —— 以前这里 swallow 掉失败，于是"点了解除封印、界面还是已封印"）。
+    /// 为什么必须带监护码：一条"谁都能喊一声就把封印抹掉"的命令就是一个后门，
+    /// 服务自己验证等于把判断权放回它该在的地方。
+    /// </para>
+    /// </summary>
+    public const string ClearSeal = "clear-seal";
+
     private static readonly JsonSerializerOptions Options = new()
     {
         Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
