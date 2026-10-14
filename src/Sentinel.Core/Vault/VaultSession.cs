@@ -285,7 +285,9 @@ public sealed class VaultSession : IDisposable
             if (secret is null)
                 return NoSecret("设密码");
 
-            _keys.SetUserPassword(_dataKey, newPassword, secret);
+            // 手上正好有监护码（刚用它进来），顺手把新密码的派生钥匙也寄存一份 ——
+            // 否则这个保险箱下次被封印，还是得再设一次密码。
+            _keys.SetUserPassword(_dataKey, newPassword, secret, _guardianCode);
 
             return FinishUnseal();
         }

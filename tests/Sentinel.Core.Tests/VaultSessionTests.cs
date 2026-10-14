@@ -496,6 +496,46 @@ public class VaultSessionTests : IDisposable
         Assert.Single(recovered.Entries);
     }
 
+    /// <summary>
+    /// 老保险箱（没有寄存）补设一次密码之后，**下一次被封印就该免密码了** ——
+    /// 否则"设过一次"这件事永远不算数，每次封印都要再设一遍。
+    /// </summary>
+    [Fact]
+    public void Setting_a_password_while_holding_the_code_arms_it_for_next_time()
+    {
+        var code = VaultCrypto.NewGuardianCode();
+
+        using (var session = Session())
+        {
+            Assert.True(session.Create("一个足够长的密码", code).Ok);
+
+            // 模拟"老保险箱"：把寄存抹掉
+            var path = VaultGuard.KeysPathFor(_config);
+            var keys = VaultKeys.Load(path)!;
+            keys.GuardianSealedUserKey = null;
+            keys.Save(path);
+        }
+
+        VaultGuard.Seal(_config, "第一次封印");
+
+        using (var first = Session())
+        {
+            Assert.True(first.UnlockWithGuardianCode(code).Ok);
+            Assert.False(first.CanRestorePasswordWithoutTyping);        // 老保险箱：没有寄存
+            Assert.True(first.UnsealWithPassword("补设的足够长的密码").Ok);
+        }
+
+        VaultGuard.Seal(_config, "第二次封印");
+
+        using var second = Session();
+        Assert.True(second.UnlockWithGuardianCode(code).Ok);
+        Assert.True(second.CanRestorePasswordWithoutTyping);            // ★ 补设那次顺手寄存上了
+        Assert.True(second.UnsealKeepingPassword().Ok);
+
+        second.Lock();
+        Assert.True(second.UnlockWithPassword("补设的足够长的密码").Ok);
+    }
+
     [Fact]
     public void Changing_the_password_retires_the_stored_key()
     {

@@ -142,16 +142,30 @@ public sealed class VaultKeys
     /// user password again must not quietly put back the door that was taken away.
     /// </para>
     /// </summary>
-    public void SetUserPassword(byte[] key, string password, byte[] machineSecret)
+    /// <param name="guardianCodeForStorage">
+    /// 手上正好有监护码时传进来（比如"用监护码解开封印、顺手设个新密码"）—— 那就把新密码的
+    /// 派生钥匙也寄存一份，下次封印之后照样免密码。没有它就只能作废那份寄存（否则旧密码会在
+    /// 解封之后复活，那是安全倒退）。
+    /// </param>
+    public void SetUserPassword(byte[] key, string password, byte[] machineSecret, string? guardianCodeForStorage = null)
     {
         UserSalt = VaultCrypto.NewSalt();
-        WrappedByUser = VaultCrypto.Wrap(
-            key, VaultCrypto.DeriveBoundKey(password, UserSalt, Iterations, machineSecret));
+
+        var derived = VaultCrypto.DeriveKey(password, UserSalt, Iterations);
+
+        WrappedByUser = VaultCrypto.Wrap(key, VaultCrypto.BindToMachine(derived, machineSecret));
 
         MachineBound = true;
-
-        // 换过密码，"寄存的那份派生钥匙"就过期了：留着它，解封之后旧密码会复活 —— 那是安全倒退。
         GuardianSealedUserKey = null;
+
+        var normalized = VaultCrypto.NormalizeGuardianCode(guardianCodeForStorage);
+
+        if (normalized is not null && GuardianSalt is not null)
+        {
+            var guardianKey = VaultCrypto.DeriveKey(normalized, GuardianSalt, Iterations);
+
+            GuardianSealedUserKey = VaultCrypto.Encrypt(UserKeyPayload(derived, UserSalt), guardianKey);
+        }
     }
 
     /// <summary>
