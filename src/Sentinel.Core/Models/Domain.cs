@@ -1,6 +1,14 @@
 namespace Sentinel.Core.Models;
 
 /// <summary>A window discovered by the enumerator.</summary>
+/// <param name="IsExposed">
+/// 有一块真的露在屏幕上吗（没被别的窗口完全盖住）。
+///
+/// <para>
+/// 默认 true 是为了让不关心这件事的调用方（测试里的假窗口）保持原样；真实的枚举器总会给出
+/// 算出来的值。
+/// </para>
+/// </param>
 public sealed record WindowRef(
     int ProcessId,
     string ProcessName,
@@ -8,7 +16,8 @@ public sealed record WindowRef(
     string ExecutablePath,
     long NativeHandle,
     bool IsMinimized = false,
-    bool IsForeground = false);
+    bool IsForeground = false,
+    bool IsExposed = true);
 
 /// <summary>A single read of a target window's content.</summary>
 public sealed record ContentSnapshot(

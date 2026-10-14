@@ -61,13 +61,69 @@ public sealed class WindowEnumerator : IWindowEnumerator, IDisposable
                 return true;
 
             var (processName, exePath) = DescribeProcess((int)pid, _includeExecutablePath);
+            var minimized = NativeMethods.IsIconic(hwnd);
+
             results.Add(new WindowRef((int)pid, processName, title.ToString(), exePath, hwnd,
-                NativeMethods.IsIconic(hwnd),
-                hwnd == foreground));
+                minimized,
+                hwnd == foreground,
+                IsExposedOnScreen(hwnd, minimized)));
             return true;
         }, 0);
 
         return results;
+    }
+
+    /// <summary>
+    /// 这个窗口有没有<b>一块真的露在屏幕上</b>。
+    ///
+    /// <para>
+    /// 判据是采样：在窗口矩形里撒一个网格，看每个点底下那个顶层窗口是不是它自己。有一个点是它
+    /// 就说明露着；全都落在别人身上，就是被完全盖住了。
+    /// </para>
+    /// <para>
+    /// 为什么不能只看 <c>IsWindowVisible</c>：它只说"没被隐藏" —— 一个被最大化窗口完全盖住的
+    /// 窗口照样返回 true。而"看得见"才是该不该管的理由：看不见的东西影响不到任何人，
+    /// 读它只是白花 UIA 的时间（一次几百毫秒）。反过来，**露着就得管** ——
+    /// 否则摆一个小窗口挡在前面，旁边的违规视频就永远没人看了。
+    /// </para>
+    /// <para>
+    /// 采样有精度：露出来的那条边细到不足窗口的六分之一左右时可能采不到。真要那种精度，
+    /// 把网格加密就行 —— 每个采样点只是一次本地调用，比一次 UIA 读取便宜三个数量级。
+    /// </para>
+    /// </summary>
+    private static bool IsExposedOnScreen(nint hwnd, bool minimized)
+    {
+        if (minimized)
+            return false;   // 收起来的窗口一点都不露
+
+        if (!NativeMethods.GetWindowRect(hwnd, out var rect))
+            return false;
+
+        var width = rect.Right - rect.Left;
+        var height = rect.Bottom - rect.Top;
+
+        if (width <= 0 || height <= 0)
+            return false;
+
+        // 7×7，从离边 2 像素到离边 2 像素 —— 避开圆角/阴影那道边，又不至于漏掉贴边露出来的部分。
+        const int steps = 7;
+
+        for (var row = 0; row < steps; row++)
+        {
+            var y = rect.Top + 2 + Math.Max(0, height - 4) * row / (steps - 1);
+
+            for (var column = 0; column < steps; column++)
+            {
+                var x = rect.Left + 2 + Math.Max(0, width - 4) * column / (steps - 1);
+
+                var hit = NativeMethods.WindowFromPoint(new NativeMethods.POINT(x, y));
+
+                if (hit != 0 && NativeMethods.GetAncestor(hit, NativeMethods.GA_ROOT) == hwnd)
+                    return true;
+            }
+        }
+
+        return false;
     }
 
     /// <summary>The shell's own windows pass the alt-tab test but are not application windows.</summary>

@@ -42,6 +42,15 @@ public sealed class MonitorLoop
     private bool _dryRun;
 
     private readonly Dictionary<string, CacheEntry> _cache = new();
+
+    /// <summary>跑过多少轮了。只为"最久没读过谁"排个队，不做别的判断。</summary>
+    private long _ticks;
+
+    /// <summary>
+    /// 一轮最多读几个窗口（前台那个排最前，也算在里面）。UIA 一次读取几百毫秒，窗口一多、
+    /// 一轮就赶不上间隔；超出上限的轮着来，最坏等几轮。
+    /// </summary>
+    private const int MaxReadsPerTick = 4;
     private readonly Dictionary<string, DateTimeOffset> _lastRunAt = new();
 
     private sealed record CacheEntry(
@@ -50,6 +59,8 @@ public sealed class MonitorLoop
         Verdict Verdict,
         bool WasMinimized,
         bool WasForeground,
+        bool WasExposed,
+        long LastReadTick,
         int ModelStamp);
 
     /// <summary>
@@ -141,6 +152,7 @@ public sealed class MonitorLoop
     {
         var outcomes = new List<MonitorOutcome>();
         var windows = _enumerator.Enumerate();
+        _ticks++;
 
         // Read once per tick, not once per target: the loop runs a few times a second and the answer
         // is the same for every target in one pass.
@@ -153,6 +165,12 @@ public sealed class MonitorLoop
             if (!ShouldRunNow(target, now))
                 continue;
 
+            // 先挑出"值得读"的：前台那一个，以及**任何露在屏幕上的**窗口。
+            //
+            // 以前只看前台，于是有个明显的绕法：摆一个小窗口压在最上面，旁边那个违规视频就
+            // 永远没人读 —— 可它明明露着、人明明在看。判据因此改成"看得见就得管"。
+            var readable = new List<WindowRef>();
+
             foreach (var window in windows)
             {
                 if (!TargetMatcher.Matches(target, window))
@@ -160,11 +178,29 @@ public sealed class MonitorLoop
 
                 if (!IsWorthReading(window))
                 {
-                    RememberItLeftTheFront(target, window);
+                    RememberWindowState(target, window);
                     continue;
                 }
 
-                var outcome = Evaluate(target, window, _config, pauses, now);
+                readable.Add(window);
+            }
+
+            // 前台那个排最前（每轮都读），其余按"最久没读过的先读"轮转。
+            var queue = readable
+                .OrderByDescending(window => window.IsForeground)
+                .ThenBy(window => _cache.TryGetValue(Key(target, window), out var entry) ? entry.LastReadTick : 0)
+                .ToList();
+
+            for (var index = 0; index < queue.Count; index++)
+            {
+                if (index >= MaxReadsPerTick)
+                {
+                    // 轮到后面的等下一轮，但状态要记下来（见 RememberWindowState）。
+                    RememberWindowState(target, queue[index]);
+                    continue;
+                }
+
+                var outcome = Evaluate(target, queue[index], _config, pauses, now);
                 if (outcome is not null)
                     outcomes.Add(outcome);
             }
@@ -190,24 +226,49 @@ public sealed class MonitorLoop
     /// </description></item>
     /// </list>
     /// </summary>
-    private static bool IsWorthReading(WindowRef window) => window.IsForeground && !window.IsMinimized;
+    private static bool IsWorthReading(WindowRef window) => window.IsExposed && !window.IsMinimized;
 
     /// <summary>
-    /// 记下"它已经不在前台了"。
+    /// 这一轮没读它 —— 把"它现在是什么状态"记下来。
     ///
     /// <para>
-    /// 前台那条限制会把下面这段逻辑废掉：一个窗口被判定为拦截、提醒过之后，人切走了，
-    /// 过一会儿又切回来 —— 那属于"又来看了一次"，该重新提醒。而认出这件事，靠的正是
-    /// "上一轮它不在前台"这个记录。既然不在前台时我们不再去读它，就得在跳过的这条路上把
-    /// 这一笔记下来，否则切回来时看到的永远是"上一轮它在前台"，第二次提醒就再也不会发生。
+    /// 三种"没读"都走这里：被别的窗口完全盖住、排在轮转队伍的后面、以及被最小化。
+    /// 记下来是为了认出**状态变化**，而这正是最容易漏的一环：
+    /// </para>
+    /// <list type="bullet">
+    /// <item><description>
+    /// 一个窗口被判违规、提醒过之后，人切走了、过一会儿又切回来 —— 那是"又看了一次"，
+    /// 该重新提醒；认出来靠的正是"上一轮它不在前台"。
+    /// </description></item>
+    /// <item><description>
+    /// 摆一个窗口挡在前面把违规的那个盖住，再把挡箭牌关掉 —— 那也属于"又看了一次"。
+    /// 不记的话，被盖住时没读、内容也没变，缓存直接放过，违规的东西就这么回来了。
+    /// </description></item>
+    /// </list>
+    /// <para>
+    /// 所以这里**只记事实**（谁在前台、谁最小化、谁露着），判断留给下一次真的读到时做。
     /// </para>
     /// </summary>
-    private void RememberItLeftTheFront(Target target, WindowRef window)
+    private void RememberWindowState(Target target, WindowRef window)
     {
         var key = Key(target, window);
 
-        if (_cache.TryGetValue(key, out var entry) && entry.WasForeground != window.IsForeground)
-            _cache[key] = entry with { WasForeground = window.IsForeground, WasMinimized = window.IsMinimized };
+        if (!_cache.TryGetValue(key, out var entry))
+            return;   // 还没读过它，谈不上"变化"
+
+        if (entry.WasForeground == window.IsForeground
+            && entry.WasMinimized == window.IsMinimized
+            && entry.WasExposed == window.IsExposed)
+        {
+            return;
+        }
+
+        _cache[key] = entry with
+        {
+            WasForeground = window.IsForeground,
+            WasMinimized = window.IsMinimized,
+            WasExposed = window.IsExposed,
+        };
     }
 
     /// <summary>
@@ -307,6 +368,10 @@ public sealed class MonitorLoop
         // A window we minimized is back in front of the user.
         var reopened = cached is { WasMinimized: true } && !window.IsMinimized;
 
+        // 上一轮它被别的窗口盖住、这一轮露出来了 —— 和人把它从最小化恢复是同一件事：
+        // 又看到了。不认这一条，挡在前面的那个窗口一关，被判过的页面就靠缓存蒙混过去了。
+        var revealed = cached is { WasExposed: false } && window.IsExposed;
+
         ContentSnapshot effective;
         Verdict verdict;
 
@@ -344,13 +409,13 @@ public sealed class MonitorLoop
 
         // Each of these ends the previous episode and starts a fresh one, so none of them may wait out
         // a cooldown: a cooldown exists to stop a storm, not to excuse a second attempt.
-        if (reopened || returned || repeatDue)
+        if (reopened || revealed || returned || repeatDue)
             _controller.Clear(controllerKey);
 
         // Record the live window state on every path — a later restore or return is only detectable
         // because the previous tick wrote it down.
         _cache[cacheKey] = new CacheEntry(
-            target.Id, effective, verdict, window.IsMinimized, window.IsForeground, stamp);
+            target.Id, effective, verdict, window.IsMinimized, window.IsForeground, window.IsExposed, _ticks, stamp);
 
         if (policy is null)
         {
@@ -365,8 +430,11 @@ public sealed class MonitorLoop
         }
 
         // Nothing new to judge, and no reason to speak up again.
-        if (unchanged && !reopened && !returned && !repeatDue && !_controller.HasPendingEpisode(controllerKey))
+        if (unchanged && !reopened && !revealed && !returned && !repeatDue
+            && !_controller.HasPendingEpisode(controllerKey))
+        {
             return null;
+        }
 
         // A minimized window is not being looked at, so there is nothing to interrupt. Getting this
         // wrong is loud: starting the Agent (or saving the config) rebuilds the monitor, the content

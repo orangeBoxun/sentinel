@@ -29,9 +29,17 @@ public class MonitorLoopTests
 
         public FakeReader(ContentSnapshot? snapshot) => _snapshot = snapshot;
 
+        /// <summary>读了几次 —— "压根没读它"这件事得能证明，不能靠"没发生什么"来推。</summary>
+        public int Reads { get; private set; }
+
         public bool IsAvailable() => true;
         public ReaderCapabilities Capabilities => new(true, true, true);
-        public ContentSnapshot? Read(WindowRef window, ReaderOptions? options = null) => _snapshot;
+
+        public ContentSnapshot? Read(WindowRef window, ReaderOptions? options = null)
+        {
+            Reads++;
+            return _snapshot;
+        }
     }
 
     private sealed class MutableEnumerator : IWindowEnumerator
@@ -66,11 +74,12 @@ public class MonitorLoopTests
     }
 
     /// <summary>
-    /// 测试里那个"用户正在看的窗口"。
+    /// 测试里那个"用户看得见的窗口"。
     ///
-    /// 默认**在前台、没有最小化** —— 因为循环现在只看这样的窗口（最小化的没人看得见；
-    /// 后台窗口的内容会自己变，每变一次就是一次要花钱的判定）。要测后台或者最小化的情形，
-    /// 用例里显式写出来。
+    /// 默认**露在屏幕上**（在前台、没最小化）。循环现在的判据是"看得见就得管"：
+    /// 前台那一个、以及**任何露在屏幕上的**窗口都读；被完全盖住的、最小化的不读
+    /// （看不见的东西影响不到任何人，读它只是白花 UIA 的时间）。要测那两种情形，
+    /// 用例里显式写 `IsExposed = false` / `IsMinimized = true`。
     /// </summary>
     private static readonly WindowRef Browser = new(
         1234, "Codex", "My Page", @"C:\app\Codex.exe", 0xABCD, IsMinimized: false, IsForeground: true);
@@ -685,19 +694,21 @@ public class MonitorLoopTests
     }
 
     [Fact]
-    public void A_page_behind_other_windows_is_not_even_looked_at()
+    public void A_page_that_is_completely_covered_is_not_even_looked_at()
     {
-        // 以前这里断言的是"不重复提醒"——因为循环每一轮都会读后台窗口，只是读出"它不在前台"
-        // 然后忍住不响。现在不读了：后台窗口的内容会自己变（视频往下推、聊天窗一直在跳），
-        // 每变一次就是一次要花钱的判定，而人在看的是前台那一个。
-        //
-        // 所以这里从"读到了但不说话"变成"根本没读"。不响得更彻底，也省掉了那份开销。
+        // 判据是"露没露在屏幕上"，不是"在不在前台"：被完全盖住的窗口一点都不露，
+        // 对任何人都没有影响，读它只是白花 UIA 的时间（一次几百毫秒）。
         var config = ConfigWith("bilibili", new[] { ActionType.Notify }, grace: 0, cooldown: 0);
         config.Policies[0].RepeatSeconds = 300;
 
         var notify = new RecordingNotify();
-        var enumerator = new MutableEnumerator { Windows = { Browser with { IsForeground = false } } };
-        var loop = LoopWith(config, new FakeReader(BlockedPage),
+        var reader = new FakeReader(BlockedPage);
+        var enumerator = new MutableEnumerator
+        {
+            Windows = { Browser with { IsForeground = false, IsExposed = false } },
+        };
+
+        var loop = LoopWith(config, reader,
             new Dictionary<ActionType, IAction> { [ActionType.Notify] = notify }, enumerator);
 
         var t0 = new DateTimeOffset(2026, 1, 1, 10, 0, 0, TimeSpan.Zero);
@@ -706,6 +717,85 @@ public class MonitorLoopTests
         Assert.Empty(loop.Tick(t0.AddMinutes(10)));
 
         Assert.Empty(notify.Reports);
+        Assert.Equal(0, reader.Reads);   // 压根没读它
+    }
+
+    [Fact]
+    public void A_page_that_is_merely_in_the_background_is_still_judged()
+    {
+        // 这一条堵的是那个洞：摆一个小窗口压在最上面当挡箭牌，旁边露着的违规视频
+        // 以前永远没人读 —— 可它明明露着、人明明在看。现在"看得见就得管"。
+        var config = ConfigWith("bilibili", new[] { ActionType.Minimize }, grace: 0, cooldown: 0);
+
+        var minimize = new RecordingAction();
+        var enumerator = new MutableEnumerator { Windows = { Browser with { IsForeground = false } } };
+
+        var loop = LoopWith(config, new FakeReader(BlockedPage),
+            new Dictionary<ActionType, IAction> { [ActionType.Minimize] = minimize }, enumerator);
+
+        var outcomes = loop.Tick(new DateTimeOffset(2026, 1, 1, 10, 0, 0, TimeSpan.Zero));
+
+        Assert.Single(outcomes);
+        Assert.Single(minimize.Calls);   // 后台、但露着 → 照样动手
+    }
+
+    [Fact]
+    public void A_window_that_was_covered_and_comes_back_is_judged_again()
+    {
+        // 把挡箭牌关掉、违规的页面重新露出来 —— 那是"又看了一次"，**哪怕内容一个字都没变**
+        // 也得重判。少了这一条，被判过的页面就靠缓存蒙混过去了：盖住期间没读、内容没变、
+        // 缓存直接放过。
+        var config = ConfigWith("bilibili", new[] { ActionType.Notify }, grace: 0, cooldown: 0);
+        config.Policies[0].RepeatSeconds = 300;
+
+        var notify = new RecordingNotify();
+
+        // 后台但露着，而且**一直不在前台** —— 这样第二次提醒就只可能来自"露出来了"这一条触发
+        // （重复提醒要 RepeatSeconds、回到前台要 WasForeground 变化，这里两者都不成立）。
+        var window = Browser with { IsForeground = false };
+        var enumerator = new MutableEnumerator { Windows = { window } };
+
+        var loop = LoopWith(config, new FakeReader(BlockedPage),
+            new Dictionary<ActionType, IAction> { [ActionType.Notify] = notify }, enumerator);
+
+        var t0 = new DateTimeOffset(2026, 1, 1, 10, 0, 0, TimeSpan.Zero);
+
+        loop.Tick(t0);
+        Assert.Single(notify.Reports);                                   // 露着 → 提醒
+
+        enumerator.Windows[0] = window with { IsExposed = false };       // 被别的窗口完全盖住
+        loop.Tick(t0.AddSeconds(2));
+        Assert.Single(notify.Reports);                                   // 盖住期间不响
+
+        enumerator.Windows[0] = window;                                  // 又露出来，内容一模一样
+        loop.Tick(t0.AddSeconds(4));
+
+        Assert.Equal(2, notify.Reports.Count);                           // ★ 重新判、重新响
+    }
+
+    [Fact]
+    public void More_visible_windows_than_the_cap_are_all_read_within_a_few_ticks()
+    {
+        // 一轮最多读四个（UIA 一次几百毫秒，窗口一多一轮就赶不上间隔）。多出来的轮着来 ——
+        // 关键是不能有谁**永远**读不到。
+        var config = ConfigWith("bilibili", new[] { ActionType.Notify }, grace: 0, cooldown: 0);
+
+        var enumerator = new MutableEnumerator();
+
+        foreach (var handle in new[] { 0x1001, 0x1002, 0x1003, 0x1004, 0x1005, 0x1006 })
+            enumerator.Windows.Add(Browser with { NativeHandle = handle, IsForeground = false });
+
+        var reader = new FakeReader(BlockedPage);
+        var loop = LoopWith(config, reader, new Dictionary<ActionType, IAction>(), enumerator);
+
+        var t0 = new DateTimeOffset(2026, 1, 1, 10, 0, 0, TimeSpan.Zero);
+
+        loop.Tick(t0);
+        Assert.Equal(4, reader.Reads);          // 一轮不超过上限
+
+        loop.Tick(t0.AddSeconds(2));
+        Assert.Equal(8, reader.Reads);
+        Assert.Equal(6, loop.TrackedWindowCount);   // 两轮之内六张都读到了
     }
 
     [Fact]
