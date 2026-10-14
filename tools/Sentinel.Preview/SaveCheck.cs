@@ -227,6 +227,71 @@ internal static class SaveCheck
         Console.WriteLine($"  填上进程名再应用: {(added is null ? "**没存进去**" : $"存进去了（{added.Id}）")}");
         ok &= added is not null;
 
+        // ---- 一之三、草稿不许从别的页签"顺手"溜进配置
+        //
+        // 草稿的意义就是"没点应用之前，它不在配置里"。所以：做了草稿之后，在**别的页签**上
+        // 做一次会保存的动作，配置里不该出现它；而它自己该还在界面上等着。
+        window.SelectTab(3);
+        Pump();
+
+        // 规则挂在目标下：先在下拉框里挑一个目标，否则点「新建」只会得到一句"没有选中任何目标"，
+        // 而那样一来下面的断言会因为"没造出草稿"而假通过。
+        if (window.FindName("RuleTargetPicker") is ComboBox picker && picker.Items.Count > 0)
+        {
+            picker.SelectedIndex = 0;
+            Pump();
+        }
+
+        ((ListBox)window.FindName("RuleList")!).SelectedIndex = 0;
+        Pump();
+
+        var rulesBeforeDraft = ((ListBox)window.FindName("RuleList")!).Items.Count;
+
+        Click(window, "新建");
+        Pump();
+
+        var draftShown = ((ListBox)window.FindName("RuleList")!).Items.Count;
+
+        Console.WriteLine();
+        Console.WriteLine($"新建规则草稿：列表 {rulesBeforeDraft} → {draftShown} 行");
+
+        ok &= draftShown == rulesBeforeDraft + 1;   // 没造出来的话，下面那条泄漏检查等于没测
+        ((TextBox)window.FindName("RulePatternsBox")!).Text = "草稿里的词";
+        Pump();
+
+        window.SelectTab(2);   // 换个页签，在那里改点东西并保存
+        Pump();
+
+        if (window.FindName("TargetList") is ListBox tl && tl.Items.Count > 0)
+        {
+            tl.SelectedIndex = 0;
+            Pump();
+        }
+
+        var toggle2 = (CheckBox)window.FindName("TargetEnabledCheck")!;
+        toggle2.IsChecked = toggle2.IsChecked != true;
+        Pump();
+        Click(window, "应用修改");
+        Pump();
+
+        var leaked = state.Config.Targets
+            .SelectMany(t => t.Rules)
+            .Any(r => r.Match.Patterns.Contains("草稿里的词"));
+
+        Console.WriteLine();
+        Console.WriteLine($"别的页签保存之后：草稿里的词进配置了吗={leaked}；规则列表还有 {((ListBox)window.FindName("RuleList")!).Items.Count} 行（草稿前 {draftShown}）");
+
+        ok &= !leaked;
+
+        // ---- 一之四、草稿要扛得住"后台把配置换掉"
+        state.ReloadConfig();   // 心跳发现版本变了时就是这么做的
+        Pump();
+
+        var stillThere = ((ListBox)window.FindName("RuleList")!).Items.Count == draftShown;
+        Console.WriteLine($"后台重载之后：草稿还在列表里吗={stillThere}");
+
+        ok &= stillThere;
+
         // ---- 二、改点别的也能存：换一条规则的启用开关
         window.SelectTab(2);
         Pump();
