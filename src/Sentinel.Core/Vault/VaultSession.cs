@@ -41,6 +41,9 @@ public sealed class VaultSession : IDisposable
     /// </summary>
     private readonly Func<byte[]?>? _machineSecret;
 
+    /// <summary>这次打开用的监护码；<see cref="Lock"/> 会把它清掉。</summary>
+    private string? _guardianCode;
+
     private readonly string _configPath;
     private readonly Func<GuardStatus>? _extraCheck;
 
@@ -245,6 +248,13 @@ public sealed class VaultSession : IDisposable
         if (key is null)
             return VaultResult.Fail("监护码不对。");
 
+        // 记下这次用的监护码：解除封印时要用它取回"寄存的那把用户派生钥匙"，免得人再输一遍。
+        // **锁上就忘**（见 Lock）。保险箱的钥匙本来就已在内存里，这一份并不比它更敏感。
+        //
+        // 存**原样**，不存归一化之后的结果：归一化把校验位去掉、只剩 32 个字符，再归一化一次
+        // 会被判成"格式不对"（它要求 34 位）。归一是拿到码的人（用户）做的事，这里不要抢着做。
+        _guardianCode = code;
+
         return Open(key);
     }
 
@@ -276,19 +286,69 @@ public sealed class VaultSession : IDisposable
                 return NoSecret("设密码");
 
             _keys.SetUserPassword(_dataKey, newPassword, secret);
-            _keys.ResetToNormal();
-            _keys.Save(VaultGuard.KeysPathFor(_configPath));
 
-            VaultGuard.ClearSeal(_configPath);
-            SealReason = null;
-            Guard = GuardStatus.Intact;
-
-            return VaultResult.Success;
+            return FinishUnseal();
         }
         catch (Exception ex)
         {
             return VaultResult.Fail($"解除封印失败：{ex.Message}");
         }
+    }
+
+    /// <summary>
+    /// 用监护码打开之后：**原来的密码继续管用，什么都不用填**。
+    ///
+    /// <para>
+    /// 原理：建保险箱时把"由密码派生出来的那把钥匙"另存了一份、**用监护码加密**（见
+    /// <see cref="VaultKeys.GuardianSealedUserKey"/>）。封印会把用户那道门连包装一起删掉 ——
+    /// 所以正常情形下"下次还用原来那个密码"是做不到的；但解除封印时人已经拿着监护码，
+    /// 于是把那份派生钥匙取出来、配上新的本机秘密，门就原样包回去了。
+    /// </para>
+    /// <para>
+    /// 两种情况走不通：从来没寄存过（老保险箱），或者**改过密码**（改密码会作废那份寄存 ——
+    /// 否则旧密码会在解封之后复活）。那时界面会退回"请设一个新密码"。
+    /// </para>
+    /// </summary>
+    public VaultResult UnsealKeepingPassword()
+    {
+        if (Phase != VaultPhase.Unlocked || _dataKey is null || _keys is null)
+            return VaultResult.Fail("先用监护码打开保险箱。");
+
+        if (!CanRestorePasswordWithoutTyping)
+            return VaultResult.Fail("这个保险箱没有寄存原来那把钥匙 —— 请设一个新密码。");
+
+        var secret = Secret();
+        if (secret is null)
+            return NoSecret("解除封印");
+
+        try
+        {
+            if (!_keys.TryRestoreUserDoor(_dataKey, _guardianCode!, secret))
+                return VaultResult.Fail("取回原来那把钥匙失败了 —— 请设一个新密码。");
+
+            return FinishUnseal();
+        }
+        catch (Exception ex)
+        {
+            return VaultResult.Fail($"解除封印失败：{ex.Message}");
+        }
+    }
+
+    /// <summary>能不能"什么都不填"地解除封印。界面靠它决定显示哪个按钮。</summary>
+    public bool CanRestorePasswordWithoutTyping =>
+        _guardianCode is not null && _keys?.GuardianSealedUserKey is not null;
+
+    /// <summary>解除封印的收尾：状态回正常、抹掉标记。两条路（填密码 / 不填密码）共用。</summary>
+    private VaultResult FinishUnseal()
+    {
+        _keys!.ResetToNormal();
+        _keys.Save(VaultGuard.KeysPathFor(_configPath));
+
+        VaultGuard.ClearSeal(_configPath);
+        SealReason = null;
+        Guard = GuardStatus.Intact;
+
+        return VaultResult.Success;
     }
 
     private VaultResult Open(byte[] key)
@@ -317,6 +377,7 @@ public sealed class VaultSession : IDisposable
             CryptographicZero(_dataKey);
 
         _dataKey = null;
+        _guardianCode = null;
 
         if (Phase == VaultPhase.Unlocked)
             Phase = VaultPhase.Locked;

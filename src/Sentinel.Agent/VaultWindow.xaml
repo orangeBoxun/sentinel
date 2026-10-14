@@ -184,12 +184,23 @@
                     <StackPanel>
                         <TextBlock FontWeight="SemiBold" Foreground="{StaticResource Warning}" Text="你正在用监护码访问。" />
                         <TextBlock Margin="0,7,0,0" TextWrapping="Wrap" LineHeight="21"
-                                   Text="设一个新密码就解除封印。监护码保持现在这个 —— 要换的话，下面有「换监护码」。（封印把密码那道门删掉了，所以密码得重新包一遍；你可以填回原来那个。）" />
+                                   Text="解除封印就行。监护码保持现在这个 —— 要换的话，下面有「换监护码」。" />
 
-                        <TextBlock Style="{StaticResource FieldLabel}" Margin="0,18,0,8" Text="新密码A" />
-                        <PasswordBox x:Name="RecoverPassword" />
+                        <!-- 情形一：当初那把由密码A派生的钥匙寄存在监护码底下 —— 什么都不用填 -->
+                        <Button x:Name="KeepPasswordButton" Content="解除封印（继续用原来的密码A）" Style="{StaticResource PrimaryButton}"
+                                HorizontalAlignment="Left" Margin="0,16,0,0" Visibility="Collapsed" Click="UnsealKeepingPassword_Click" />
+                        <TextBlock x:Name="KeepPasswordHint" Margin="0,8,0,0" TextWrapping="Wrap" LineHeight="20"
+                                   Style="{StaticResource Hint}" Visibility="Collapsed"
+                                   Text="不用填任何东西：当初那把由密码A派生的钥匙寄存在监护码底下，取出来重新包一遍就行。" />
 
-                        <Button Content="设新密码并解除封印" Style="{StaticResource PrimaryButton}" HorizontalAlignment="Left" Margin="0,12,0,0" Click="SetPasswordAndUnseal_Click" />
+                        <!-- 情形二：寄存的钥匙不在（改过密码，或者是老保险箱）—— 得设一个新的 -->
+                        <StackPanel x:Name="NewPasswordPanel">
+                            <TextBlock Margin="0,16,0,0" TextWrapping="Wrap" LineHeight="20" Style="{StaticResource Hint}"
+                                       Text="这个保险箱没有寄存原来那把钥匙（改过密码之后就会这样），所以要设一个新密码 —— 填回原来那个也行。" />
+                            <TextBlock Style="{StaticResource FieldLabel}" Margin="0,14,0,8" Text="新密码A" />
+                            <PasswordBox x:Name="RecoverPassword" />
+                            <Button Content="设新密码并解除封印" Style="{StaticResource PrimaryButton}" HorizontalAlignment="Left" Margin="0,12,0,0" Click="SetPasswordAndUnseal_Click" />
+                        </StackPanel>
 
                         <TextBlock x:Name="RecoveryError" Style="{StaticResource ErrorText}" Margin="0,12,0,0" />
                     </StackPanel>
@@ -198,6 +209,7 @@
                 <WrapPanel Grid.Row="1" Margin="0,0,0,14">
                     <Button Style="{StaticResource IconButton}" Tag="{StaticResource IconPlus}" Content="放入文件" Click="AddFiles_Click" Margin="0,0,8,8" />
                     <Button Style="{StaticResource IconButton}" Tag="{StaticResource IconFolder}" Content="放入文件夹" Click="AddFolder_Click" Margin="0,0,8,8" />
+                    <Button Style="{StaticResource IconButton}" Tag="{StaticResource IconCheck}" Content="全部选中" Click="SelectAllEntries_Click" Margin="0,0,8,8" />
                     <Button Style="{StaticResource IconButton}" Tag="{StaticResource IconFolder}" Content="取出到…" Click="Extract_Click" Margin="0,0,8,8" />
                     <Button Style="{StaticResource IconButton}" Tag="{StaticResource IconTrash}" Content="删除" Click="Remove_Click" Margin="0,0,8,8" />
                     <Button Style="{StaticResource IconButton}" Tag="{StaticResource IconCopy}" Content="导出备份…" Click="ExportBackup_Click" Margin="0,0,8,8" />
@@ -223,9 +235,10 @@
                             <TextBlock Grid.Column="2" Style="{StaticResource Micro}" Text="放入时间" />
                         </Grid>
 
-                        <Separator DockPanel.Dock="Top" Margin="0,0,0,6" />
+                        <TextBlock x:Name="EntryCountText" DockPanel.Dock="Top" Style="{StaticResource Micro}" Margin="10,0,10,6" />
 
-                        <ListBox x:Name="EntryList" SelectionMode="Extended">
+                        <ListBox x:Name="EntryList" SelectionMode="Extended" SelectionChanged="EntryList_SelectionChanged"
+                                 MinHeight="300" MaxHeight="520" ScrollViewer.VerticalScrollBarVisibility="Auto">
                             <ListBox.ItemTemplate>
                                 <DataTemplate>
                                     <Grid>

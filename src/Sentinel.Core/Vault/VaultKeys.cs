@@ -54,6 +54,24 @@ public sealed class VaultKeys
 
     public byte[]? WrappedByUser { get; set; }
 
+    /// <summary>
+    /// "用户那把派生钥匙"的一份副本，**用监护码加密**。
+    ///
+    /// <para>
+    /// 存在的唯一理由：封印把用户那道门连包装一起删了，所以"下次还用原来那个密码"在正常情形下
+    /// 是做不到的（信息没了）。但用监护码解除封印时，人已经在场 —— 于是可以事先把"派生钥匙"
+    /// 寄存在监护码底下，那时取出它、配上新的本机秘密，就能把门原样包回来，用户**什么都不用填**。
+    /// </para>
+    /// <para>
+    /// 它不比保险箱本身更弱：解开它需要监护码（160 位随机 + 60 万次 PBKDF2）。而封印仍然照旧
+    /// 销毁本机秘密 —— 所以"封印之前拷出去的副本"还是打不开（那份副本里没有本机秘密）。
+    /// </para>
+    /// <para>
+    /// 改密码时会把它清掉：否则旧密码会在解封之后复活 —— 那是安全倒退。
+    /// </para>
+    /// </summary>
+    public byte[]? GuardianSealedUserKey { get; set; }
+
     public byte[]? GuardianSalt { get; set; }
 
     public byte[]? WrappedByGuardian { get; set; }
@@ -96,11 +114,17 @@ public sealed class VaultKeys
         var keys = new VaultKeys { Iterations = iterations, MachineBound = true };
 
         keys.UserSalt = VaultCrypto.NewSalt();
-        keys.WrappedByUser = VaultCrypto.Wrap(
-            key, VaultCrypto.DeriveBoundKey(userPassword, keys.UserSalt, iterations, machineSecret));
+
+        var derived = VaultCrypto.DeriveKey(userPassword, keys.UserSalt, iterations);
+
+        keys.WrappedByUser = VaultCrypto.Wrap(key, VaultCrypto.BindToMachine(derived, machineSecret));
 
         keys.GuardianSalt = VaultCrypto.NewSalt();
-        keys.WrappedByGuardian = VaultCrypto.Wrap(key, VaultCrypto.DeriveKey(normalized, keys.GuardianSalt, iterations));
+
+        var guardianKey = VaultCrypto.DeriveKey(normalized, keys.GuardianSalt, iterations);
+
+        keys.WrappedByGuardian = VaultCrypto.Wrap(key, guardianKey);
+        keys.GuardianSealedUserKey = VaultCrypto.Encrypt(UserKeyPayload(derived, keys.UserSalt), guardianKey);
 
         return keys;
     }
@@ -125,7 +149,49 @@ public sealed class VaultKeys
             key, VaultCrypto.DeriveBoundKey(password, UserSalt, Iterations, machineSecret));
 
         MachineBound = true;
+
+        // 换过密码，"寄存的那份派生钥匙"就过期了：留着它，解封之后旧密码会复活 —— 那是安全倒退。
+        GuardianSealedUserKey = null;
     }
+
+    /// <summary>
+    /// 用监护码把"原来的用户钥匙"取回来，然后配上新的本机秘密，把门原样包回去。
+    ///
+    /// <para>
+    /// 这是"用监护码打开之后，原来的密码A继续管用、什么都不用填"那条路。失败返回 false
+    /// （没寄存过、监护码不对、或者数据坏了）—— 调用方那时就该退回"请设一个新密码"。
+    /// </para>
+    /// </summary>
+    public bool TryRestoreUserDoor(byte[] key, string guardianCode, byte[] machineSecret)
+    {
+        if (GuardianSealedUserKey is null || GuardianSalt is null)
+            return false;
+
+        var normalized = VaultCrypto.NormalizeGuardianCode(guardianCode);
+
+        if (normalized is null)
+            return false;
+
+        var guardianKey = VaultCrypto.DeriveKey(normalized, GuardianSalt, Iterations);
+
+        if (!VaultCrypto.TryDecrypt(GuardianSealedUserKey, guardianKey, out var payload)
+            || payload.Length != VaultCrypto.KeySize + 16)
+        {
+            return false;
+        }
+
+        var derived = payload[..VaultCrypto.KeySize];
+        var salt = payload[VaultCrypto.KeySize..];
+
+        UserSalt = salt;
+        WrappedByUser = VaultCrypto.Wrap(key, VaultCrypto.BindToMachine(derived, machineSecret));
+        MachineBound = true;
+
+        return true;
+    }
+
+    /// <summary>寄存进监护码底下的那份东西：派生钥匙 + 它当初用的盐。盐要还回去，同一个密码才认。</summary>
+    private static byte[] UserKeyPayload(byte[] derived, byte[] salt) => [.. derived, .. salt];
 
     /// <summary>Re-wraps the data key under a new guardian code, leaving the user's wrapping alone.</summary>
     public void SetGuardianCode(byte[] key, string code)

@@ -170,7 +170,16 @@ public partial class VaultWindow : Window
             .Select(e => new Row(e))
             .ToList();
 
+        RefreshEntryCount();
+
         RecoveryBanner.Visibility = _recovering ? Visibility.Visible : Visibility.Collapsed;
+
+        // 能免密码就别让人填：那把由密码派生的钥匙寄存在监护码底下，这次就能原样包回来。
+        var keep = _recovering && _session.CanRestorePasswordWithoutTyping;
+
+        KeepPasswordButton.Visibility = keep ? Visibility.Visible : Visibility.Collapsed;
+        KeepPasswordHint.Visibility = keep ? Visibility.Visible : Visibility.Collapsed;
+        NewPasswordPanel.Visibility = keep ? Visibility.Collapsed : Visibility.Visible;
         RefreshBackupLine();
     }
 
@@ -333,6 +342,35 @@ public partial class VaultWindow : Window
     /// 手里，逼着换一次就是让人专程再跑一趟。想换，下面那个按钮随时可以换。
     /// </para>
     /// </summary>
+    /// <summary>
+    /// 什么都不填就解除封印 —— 原来那个密码继续管用。
+    ///
+    /// <para>
+    /// 能这么做，是因为当初建保险箱时把"由密码派生出来的那把钥匙"另存了一份、用监护码加密
+    /// （见 VaultKeys.GuardianSealedUserKey）。封印删掉的是<b>活着的那道门</b>，而人此刻已经
+    /// 拿着监护码，于是可以把它取回来、配上新的本机秘密重新包好。
+    /// </para>
+    /// </summary>
+    private void UnsealKeepingPassword_Click(object sender, RoutedEventArgs e)
+    {
+        var result = _session.UnsealKeepingPassword();
+
+        if (!result.Ok)
+        {
+            Fail(RecoveryError, result.Error);
+            return;
+        }
+
+        _recovering = false;
+        RecoverPassword.Clear();
+
+        MessageBox.Show(this,
+            "封印已解除。原来那个密码继续用，什么都没变。",
+            "保险箱", MessageBoxButton.OK, MessageBoxImage.Information);
+
+        Refresh();
+    }
+
     private void SetPasswordAndUnseal_Click(object sender, RoutedEventArgs e)
     {
         var result = _session.UnsealWithPassword(RecoverPassword.Password);
@@ -385,12 +423,32 @@ public partial class VaultWindow : Window
         Report(result.Ok ? [] : [$"{name}：{result.Error}"], $"已放入文件夹「{name}」。");
     }
 
+    /// <summary>列表里有多少个、选中了几个 —— 几百个的时候，光看列表看不出选没选全。</summary>
+    private void RefreshEntryCount()
+    {
+        var total = EntryList.Items.Count;
+        var picked = EntryList.SelectedItems.Count;
+
+        EntryCountText.Text = total == 0
+            ? "保险箱是空的。"
+            : $"共 {total} 个，已选 {picked} 个。选多个可以 Ctrl 点、Shift 点，或者直接点「全部选中」。";
+    }
+
+    private void EntryList_SelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e) =>
+        RefreshEntryCount();
+
+    private void SelectAllEntries_Click(object sender, RoutedEventArgs e)
+    {
+        EntryList.SelectAll();
+        RefreshEntryCount();
+    }
+
     private void Extract_Click(object sender, RoutedEventArgs e)
     {
         var chosen = SelectedEntries();
         if (chosen.Count == 0)
         {
-            VaultMessage.Text = "先在下面选一个。";
+            VaultMessage.Text = "先选几个 —— 或者点上面那个「全部选中」。";
             return;
         }
 

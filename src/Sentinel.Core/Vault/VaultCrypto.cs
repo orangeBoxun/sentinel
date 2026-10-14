@@ -44,9 +44,21 @@ public static class VaultCrypto
     /// </para>
     /// </summary>
     public static byte[] DeriveBoundKey(string password, byte[] salt, int iterations, byte[] machineSecret) =>
+        BindToMachine(DeriveKey(password, salt, iterations), machineSecret);
+
+    /// <summary>
+    /// 把"已经由密码派生出来的那把钥匙"再绑到本机秘密上。
+    ///
+    /// <para>
+    /// 单独拆出来，是为了让<b>不输入密码</b>那条路走得通：用监护码解除封印时，手上没有密码，
+    /// 但有当初存在监护码底下那份派生钥匙 —— 拿它加上新的本机秘密，就能把用户那道门原样包回来，
+    /// 于是原来的密码继续管用。
+    /// </para>
+    /// </summary>
+    public static byte[] BindToMachine(byte[] derivedFromPassword, byte[] machineSecret) =>
         HKDF.DeriveKey(
             HashAlgorithmName.SHA256,
-            Rfc2898DeriveBytes.Pbkdf2(password, salt, iterations, HashAlgorithmName.SHA256, KeySize),
+            derivedFromPassword,
             KeySize,
             machineSecret,
             Encoding.UTF8.GetBytes("sentinel-vault-user-door"));
@@ -71,6 +83,46 @@ public static class VaultCrypto
         aes.Encrypt(nonce, key, cipher, tag);
 
         return [.. nonce, .. tag, .. cipher];
+    }
+
+    /// <summary>
+    /// 用一把钥匙加密一段任意长度的东西。给"存在监护码底下的派生钥匙"用 ——
+    /// 那份东西不是一个 32 字节的密钥，<see cref="Wrap"/> 那对函数固定长度，不够用。
+    /// </summary>
+    public static byte[] Encrypt(byte[] payload, byte[] key)
+    {
+        var nonce = RandomNumberGenerator.GetBytes(NonceSize);
+        var cipher = new byte[payload.Length];
+        var tag = new byte[TagSize];
+
+        using var aes = new AesGcm(key, TagSize);
+        aes.Encrypt(nonce, payload, cipher, tag);
+
+        return [.. nonce, .. tag, .. cipher];
+    }
+
+    public static bool TryDecrypt(byte[] blob, byte[] key, out byte[] payload)
+    {
+        payload = [];
+
+        if (blob.Length < NonceSize + TagSize)
+            return false;
+
+        try
+        {
+            var plain = new byte[blob.Length - NonceSize - TagSize];
+
+            using var aes = new AesGcm(key, TagSize);
+            aes.Decrypt(blob.AsSpan(0, NonceSize), blob.AsSpan(NonceSize + TagSize), blob.AsSpan(NonceSize, TagSize), plain);
+
+            payload = plain;
+            return true;
+        }
+        catch (CryptographicException)
+        {
+            payload = [];
+            return false;
+        }
     }
 
     public static bool TryUnwrap(byte[] blob, byte[] wrappingKey, out byte[] key)

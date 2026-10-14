@@ -467,6 +467,61 @@ public class VaultSessionTests : IDisposable
     }
 
     [Fact]
+    public void Unsealing_keeps_the_same_password_without_typing_anything()
+    {
+        var code = VaultCrypto.NewGuardianCode();
+
+        using (var session = Session())
+        {
+            Assert.True(session.Create("一个足够长的密码", code).Ok);
+            session.Import(ScratchFile("doc.txt", "还在"), "doc.txt");
+        }
+
+        VaultGuard.Seal(_config, "测试");
+
+        using var recovered = Session();
+        Assert.True(recovered.UnlockWithGuardianCode(code).Ok);
+        Assert.True(recovered.CanRestorePasswordWithoutTyping);
+
+        var unsealed = recovered.UnsealKeepingPassword();
+
+        Assert.True(unsealed.Ok, unsealed.Error);
+        Assert.False(recovered.IsSealed);
+        Assert.Null(VaultGuard.ReadSeal(_config));
+
+        recovered.Lock();   // 锁上之后连那个监护码也不留
+
+        // ★ 原来那个密码，**什么都没填**就继续管用
+        Assert.True(recovered.UnlockWithPassword("一个足够长的密码").Ok);
+        Assert.Single(recovered.Entries);
+    }
+
+    [Fact]
+    public void Changing_the_password_retires_the_stored_key()
+    {
+        var code = VaultCrypto.NewGuardianCode();
+
+        using (var session = Session())
+        {
+            Assert.True(session.Create("一个足够长的密码", code).Ok);
+            Assert.True(session.ChangePassword("换过的足够长的密码").Ok);
+        }
+
+        // 换过密码，寄存的那份就作废了 —— 否则解封之后旧密码会复活（安全倒退）。
+        var keys = VaultKeys.Load(VaultGuard.KeysPathFor(_config));
+        Assert.Null(keys!.GuardianSealedUserKey);
+
+        VaultGuard.Seal(_config, "测试");
+
+        using var recovered = Session();
+        Assert.True(recovered.UnlockWithGuardianCode(code).Ok);
+        Assert.False(recovered.CanRestorePasswordWithoutTyping);
+
+        Assert.False(recovered.UnsealKeepingPassword().Ok);          // 退回"请设一个新密码"
+        Assert.True(recovered.UnsealWithPassword("再设一个足够长的密码").Ok);
+    }
+
+    [Fact]
     public void No_vault_means_nothing_to_seal()
     {
         // A marker written before a vault existed would tell someone who never had one that theirs
