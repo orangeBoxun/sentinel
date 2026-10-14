@@ -218,6 +218,9 @@ public class ModelTests
     [InlineData("[]")]                                // 空的
     [InlineData("""{"violates":true}""")]             // 对象，不是数组
     [InlineData("[maybe, 大概吧]")]                    // 第一个不是布尔
+    [InlineData("""["maybe", "可能违规"]""")]          // 第一个读不出 —— 别把"原因"当成判定读
+    [InlineData("""["违规", "在刷视频"]""")]            // 用中文词代替布尔：不认，要求换模型而不是猜
+    [InlineData("""["不违规", "关注列表页"]""")]
     public void An_answer_that_cannot_be_read_is_not_treated_as_allowed(string text)
     {
         // 这是这一层最重要的一条：认不出来 = "这次没算"，**不是"允许"**。
@@ -226,6 +229,17 @@ public class ModelTests
 
         Assert.Equal(ModelCallOutcome.NoAnswer, result.Outcome);
         Assert.False(result.Violates);
+    }
+
+    [Fact]
+    public void A_quoted_boolean_is_still_a_verdict()
+    {
+        // 本地小模型常这么回：把 true 写成带引号的字符串。以前这里直接抛异常 → 整段判定被当成
+        // "读不出"，看起来像模型监督坏了，其实只差两个引号。
+        var result = ModelClient.ParseVerdict("""["true", "无违规，内容为技术测试"]""");
+
+        Assert.Equal(ModelCallOutcome.Answered, result.Outcome);
+        Assert.True(result.Violates);
     }
 
     [Fact]

@@ -135,7 +135,11 @@ public sealed class ModelClient
 
             var verdict = ParseVerdict(text);
             return verdict.Outcome == ModelCallOutcome.NoAnswer
-                ? verdict with { Message = $"回了 200，但那段话读不出判定：{Shorten(text)}" }
+                ? verdict with
+                {
+                    Message = "回了 200，但它没按要求的格式回 —— 要的是一个 JSON 数组 [true/false, \"原因\"]。"
+                              + $"它回的是：{Shorten(text)}",
+                }
                 : verdict;
         }
     }
@@ -584,11 +588,18 @@ public sealed class ModelClient
     }
 
     /// <summary>
-    /// 把模型那段话读成二元组。
+    /// 从模型那句话里抠出判定。
     ///
-    /// 容忍外面裹着的 ``` 围栏和前后废话 —— 各家模型都爱加，而因为多了三个反引号就把一次
-    /// 判定丢掉太亏了。**但不容忍"看不懂"被当成"没问题"** —— 那种默认值会把该拦的放过去。
-    /// 看不懂就返回 NoAnswer，也就是"这次没算"，不是"允许"。
+    /// <para>
+    /// 约定只有一种形状：<c>[布尔, "原因"]</c> —— 提示词里就是这么要求的。这里容忍的只有
+    /// **外面的包装**（代码块、一句前言）以及**带引号的布尔**（<c>["true", …]</c>：语义没有
+    /// 歧义，只是 JSON 写得不规范）。
+    /// </para>
+    /// <para>
+    /// 除此之外一概不认：中文词、对象、整句人话都算"读不出"。**这不是苛刻，是不替模型猜** ——
+    /// 猜意味着把结论判反，而判反意味着该拦的放过去、不该拦的拦下来。模型给了规范还不照着回，
+    /// 那件事该由人换模型，不该由这里的代码糊过去；上层会把它的原始回答摊出来给人看。
+    /// </para>
     /// </summary>
     public static ModelCallResult ParseVerdict(string text)
     {
@@ -600,12 +611,17 @@ public sealed class ModelClient
 
         try
         {
-            var array = JsonNode.Parse(text[start..(end + 1)]) as JsonArray;
-            if (array is null || array.Count == 0)
+            if (JsonNode.Parse(text[start..(end + 1)]) is not JsonArray array || array.Count == 0)
                 return new ModelCallResult(ModelCallOutcome.NoAnswer);
 
-            var violates = array[0]?.GetValue<bool>() ?? false;
-            var reason = array.Count > 1 ? array[1]?.GetValue<string>() : null;
+            if (ReadFlag(array[0]) is not { } violates)
+                return new ModelCallResult(ModelCallOutcome.NoAnswer);
+
+            var reason = array.Count > 1
+                         && array[1] is JsonValue value
+                         && value.TryGetValue<string>(out var spoken)
+                ? spoken
+                : null;
 
             if (!violates)
                 return new ModelCallResult(ModelCallOutcome.Answered);
@@ -619,4 +635,33 @@ public sealed class ModelClient
             return new ModelCallResult(ModelCallOutcome.NoAnswer);
         }
     }
+
+    /// <summary>
+    /// 数组第一个元素当"是/否"读：真布尔，或者带引号的 <c>"true"</c>/<c>"false"</c>。
+    ///
+    /// <para>
+    /// 只多认这两个。位置已经说明它是判定，所以带引号的布尔没有歧义。别的一概不认 ——
+    /// 一旦开始从人话里找"违规"两个字，<c>["maybe", "可能违规"]</c> 就会被读成"违规"：
+    /// 那是判反，而判反意味着该拦的放过去。
+    /// </para>
+    /// </summary>
+    private static bool? ReadFlag(JsonNode? node)
+    {
+        if (node is not JsonValue value)
+            return null;
+
+        if (value.TryGetValue<bool>(out var flag))
+            return flag;
+
+        if (!value.TryGetValue<string>(out var word))
+            return null;
+
+        return word.Trim().ToLowerInvariant() switch
+        {
+            "true" => true,
+            "false" => false,
+            _ => null,
+        };
+    }
+
 }
