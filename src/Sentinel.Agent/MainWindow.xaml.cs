@@ -316,7 +316,9 @@ public partial class MainWindow : Window
         var scheduleId = selection.Schedule;
         var modelId = selection.Model;
 
-        var target = _state.Config.Targets.FirstOrDefault(t => t.Id == selection.Target);
+        var target = _stagedTarget is { } stagedTarget && stagedTarget.Id == selection.Target
+            ? stagedTarget
+            : _state.Config.Targets.FirstOrDefault(t => t.Id == selection.Target);
         var rule = _stagedRule is { } staged && staged.Id == ruleId
             ? staged
             : target?.Rules.FirstOrDefault(r => r.Id == ruleId);
@@ -717,7 +719,9 @@ public partial class MainWindow : Window
     /// </summary>
     private void ReattachSelection()
     {
-        _selectedTarget = Current(_selectedTarget, _state.Config.Targets, t => t.Id);
+        _selectedTarget = ReferenceEquals(_selectedTarget, _stagedTarget)
+            ? _stagedTarget
+            : Current(_selectedTarget, _state.Config.Targets, t => t.Id);
 
         // 规则在目标里面找：**跨目标按 Id 认会认错人** —— 这份配置里 codex 和 doubao
         // 各有一条都叫 rule 的规则。
@@ -1142,19 +1146,43 @@ public partial class MainWindow : Window
 
     // ------------------------------------------------------------------ 目标
 
+    /// <summary>
+    /// 还没保存的新目标（点「新建」造出来的草稿）。
+    ///
+    /// <para>
+    /// 和规则那条草稿同一个道理：以前点「新建」会立刻把一条**没有进程名、也没有标题条件**的
+    /// 目标写进配置，而校验把那种目标判成错误（"它会匹配所有窗口"）—— 于是保存被拒，
+    /// 用户根本建不出目标，看到的只是一句"配置没有保存"。
+    /// </para>
+    /// </summary>
+    private Target? _stagedTarget;
+
+    /// <summary>目标列表该显示什么：配置里的 + 末尾那条还没保存的草稿。</summary>
+    private IReadOnlyList<Target> TargetRows() =>
+        _stagedTarget is null ? _state.Config.Targets : _state.Config.Targets.Append(_stagedTarget).ToList();
+
+    /// <summary>「这个目标还没进配置」那一行要不要显示。</summary>
+    private void RefreshTargetStagedMark() =>
+        TargetStagedMark.Visibility = ReferenceEquals(_selectedTarget, _stagedTarget)
+            ? Visibility.Visible
+            : Visibility.Collapsed;
+
     private void RefreshTargetList()
     {
         // 先记住要选谁：重绑 ItemsSource 会把选中项打到 -1，而那次 SelectionChanged 会把
         // _selectedTarget 清成 null —— 之后再问"原来选的是谁"就晚了。
         // 按 Id 认回来：配置被整体换过之后（保存被拒时就是这样），手里的对象已经不在新列表里。
-        var wanted = _selectedTarget is { } current
-            ? _state.Config.Targets.FirstOrDefault(t => t.Id == current.Id)
-            : null;
+        // 草稿不在配置里，按 Id 认不回来，所以单独照顾一下。
+        var wanted = ReferenceEquals(_selectedTarget, _stagedTarget)
+            ? _stagedTarget
+            : _selectedTarget is { } current
+                ? _state.Config.Targets.FirstOrDefault(t => t.Id == current.Id)
+                : null;
 
         Programmatic(() =>
         {
             TargetList.ItemsSource = null;
-            TargetList.ItemsSource = _state.Config.Targets;
+            TargetList.ItemsSource = TargetRows();
 
             // 选回来。不选的话，光点一下「应用修改」就把正在编辑的东西从眼前弄丢了（以前就是这样）：
             // 选中项掉到 -1，表单跟着变灰。
@@ -1177,6 +1205,10 @@ public partial class MainWindow : Window
 
         _selectedTarget = TargetList.SelectedItem as Target;
         TargetForm.IsEnabled = _selectedTarget is not null;
+        RefreshTargetStagedMark();
+
+        // 换了目标，手里那条还没保存的规则草稿属于上一个目标 —— 丢掉。
+        _stagedRule = null;
 
         if (_selectedTarget is null)
         {
@@ -1202,19 +1234,21 @@ public partial class MainWindow : Window
         if (!ConfirmLeaveDirtyForm())
             return;
 
-        var target = new Target
+        // **不保存。** 只在内存里造一条草稿：一条还没有进程名的新目标现在写进配置，
+        // 校验会（正确地）判它"会匹配所有窗口"并拒绝整次保存 —— 于是人连目标都建不出来。
+        _stagedTarget = new Target
         {
             Id = UniqueTargetId("target"),
             DisplayName = "新目标",
             Reader = new ReaderOptions { IntervalMs = 1000 },
         };
 
-        _state.Config.Targets.Add(target);
-        SaveAndReport();
+        _stagedRule = null;
+        _selectedTarget = _stagedTarget;
         RefreshTargetList();
         RefreshRuleTargetPicker();
-
-        TargetList.SelectedItem = target;
+        TargetForm.IsEnabled = true;
+        RefreshDirtyForms();
     }
 
     private void DeleteTarget_Click(object sender, RoutedEventArgs e)
@@ -1226,6 +1260,19 @@ public partial class MainWindow : Window
         if (_selectedTarget is null)
         {
             SayNothingSelected("目标");
+            return;
+        }
+
+        // 还没保存的草稿：丢掉就是丢掉，配置里没有它，也不用保存。
+        if (ReferenceEquals(_selectedTarget, _stagedTarget))
+        {
+            _stagedTarget = null;
+            _selectedTarget = null;
+            _stagedRule = null;
+            TargetForm.IsEnabled = false;
+            _targetForm.Clear();
+            RefreshTargetList();
+            RefreshRuleTargetPicker();
             return;
         }
 
@@ -1247,11 +1294,16 @@ public partial class MainWindow : Window
     private bool ApplyTargetForm()
     {
         ReattachSelection();
+
+        // 这是点「新建」造出来的草稿吗？如果是，这**一次**点应用就是它进配置的那一刻。
         if (_selectedTarget is null)
         {
             SayNothingSelected("目标");
             return false;
         }
+
+        // 这是点「新建」造出来的草稿吗？如果是，这**一次**点应用就是它进配置的那一刻。
+        var isNew = ReferenceEquals(_selectedTarget, _stagedTarget);
 
         _selectedTarget.DisplayName = TargetNameBox.Text.Trim();
         _selectedTarget.ProcessNames = TargetProcessBox.Text
@@ -1267,7 +1319,24 @@ public partial class MainWindow : Window
         _selectedTarget.Reader.IntervalMs = ParseInt(IntervalBox.Text, 1000, 0, 600_000);
         _selectedTarget.Enabled = TargetEnabledCheck.IsChecked == true;
 
+        if (isNew && !_state.Config.Targets.Contains(_selectedTarget))
+            _state.Config.Targets.Add(_selectedTarget);
+
         var saved = SaveAndReport();
+
+        if (isNew)
+        {
+            if (saved)
+            {
+                _stagedTarget = null;      // 进去了，不再是草稿
+            }
+            else
+            {
+                // 没存进去（比如它还没有进程名）：从配置里摘回去，仍旧当草稿拿着 ——
+                // 用户填的东西不能丢。被拒的原因（"它会匹配所有窗口"）弹窗里会说。
+                _state.Config.Targets.Remove(_selectedTarget);
+            }
+        }
 
         RefreshTargetList();
         ShowValidationResult();
@@ -1325,10 +1394,14 @@ public partial class MainWindow : Window
     /// 那正是"我明明配了却没生效"的老毛病换个地方重演。
     /// </para>
     /// </summary>
-    private void RefreshStagedMark() =>
+    private void RefreshStagedMark()
+    {
         RuleStagedMark.Visibility = ReferenceEquals(_selectedRule, _stagedRule)
             ? Visibility.Visible
             : Visibility.Collapsed;
+
+        RefreshTargetStagedMark();
+    }
 
     /// <summary>重绑规则列表，并把选中的那条认回来 —— 草稿也在列表里，所以它选得回来。</summary>
     private void ShowRules()
@@ -1351,15 +1424,19 @@ public partial class MainWindow : Window
         // **按 Id 认回来，不能按对象。** 保存被拒之后配置会被整体换成新读出来的对象，手里那个
         // 已经不在新列表里了 —— 把它塞进下拉框只会得到"什么都没选"，而那个 handler 会把
         // _selectedTarget 清成 null（规则是挂在目标下面的，于是规则也跟着丢了）。
-        var wanted = _selectedTarget is { } current
-            ? _state.Config.Targets.FirstOrDefault(t => t.Id == current.Id)
-            : null;
+        var wanted = ReferenceEquals(_selectedTarget, _stagedTarget)
+            ? _stagedTarget
+            : _selectedTarget is { } current
+                ? _state.Config.Targets.FirstOrDefault(t => t.Id == current.Id)
+                : null;
+
+        var rows = TargetRows();
 
         Programmatic(() =>
         {
             RuleTargetPicker.ItemsSource = null;
-            RuleTargetPicker.ItemsSource = _state.Config.Targets;
-            RuleTargetPicker.SelectedItem = wanted ?? _state.Config.Targets.FirstOrDefault();
+            RuleTargetPicker.ItemsSource = rows;
+            RuleTargetPicker.SelectedItem = wanted ?? rows.FirstOrDefault();
         });
     }
 
@@ -1590,6 +1667,11 @@ public partial class MainWindow : Window
 
         if (isNew && _selectedTarget is not null && !_selectedTarget.Rules.Contains(_selectedRule))
             _selectedTarget.Rules.Add(_selectedRule);
+
+        // 规则是挂在目标下面的：如果这个目标自己还是草稿，它也得跟着进配置 ——
+        // 否则规则会挂在一个不在配置里的目标上，存下去等于没存。
+        if (isNew && _selectedTarget is not null && !_state.Config.Targets.Contains(_selectedTarget))
+            _state.Config.Targets.Add(_selectedTarget);
 
         var saved = SaveAndReport();
 

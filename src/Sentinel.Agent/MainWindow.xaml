@@ -217,7 +217,7 @@
                         
 
                         <WrapPanel DockPanel.Dock="Bottom" Margin="0,12,0,0">
-                            <Button Style="{StaticResource IconButton}" Tag="{StaticResource IconPlus}" Content="新建" Click="NewTarget_Click" Margin="0,0,8,8" />
+                            <Button x:Name="NewTargetButton" Style="{StaticResource IconButton}" Tag="{StaticResource IconPlus}" Content="新建" Click="NewTarget_Click" Margin="0,0,8,8" />
                             <Button Style="{StaticResource IconButton}" Tag="{StaticResource IconTrash}" Content="删除" Click="DeleteTarget_Click" Margin="0,0,8,8" />
                         </WrapPanel>
 
@@ -277,6 +277,8 @@
                             </Border></Grid>
 
                             <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,16,0,8">
+                                <TextBlock x:Name="TargetStagedMark" Style="{StaticResource DirtyMark}" Foreground="{StaticResource Warning}"
+                                           Text="● 这个目标还没进配置 —— 点「应用修改」才会写下去" />
                                 <TextBlock x:Name="TargetDirtyMark" Style="{StaticResource DirtyMark}" Text="● 有未保存的修改" />
                                 <Button x:Name="ApplyTargetButton" Content="应用修改" Style="{StaticResource PrimaryIconButton}" Tag="{StaticResource IconCheck}" Click="ApplyTarget_Click" />
                             </StackPanel>

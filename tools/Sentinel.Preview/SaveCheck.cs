@@ -192,6 +192,41 @@ internal static class SaveCheck
         ok &= rows == before + 1;
         ok &= !status.Contains("没有保存");
 
+        // ---- 一之二、点「新建」加一个**目标** —— 同一个毛病，同一个坑
+        //
+        // 以前这一步会立刻把一条没有进程名、也没有标题条件的目标写进配置，而校验（正确地）
+        // 判它"会匹配所有窗口" → 整次保存被拒 → 人连目标都建不出来，只看到一句"配置没有保存"。
+        window.SelectTab(2);
+        Pump();
+
+        var targetsBefore = state.Config.Targets.Count;
+        Click(window, "新建");
+        Pump();
+
+        var targetRows = ((ListBox)window.FindName("TargetList")!).Items.Count;
+        var afterNewTarget = ((TextBlock)window.FindName("SaveStatusText")!).Text;
+
+        Console.WriteLine();
+        Console.WriteLine("点「新建目标」之后");
+        Console.WriteLine($"  文件里的目标数: {targetsBefore} → {state.Config.Targets.Count}");
+        Console.WriteLine($"  界面上列表里  : {targetRows} 行");
+        Console.WriteLine($"  状态栏        : {afterNewTarget}");
+
+        ok &= state.Config.Targets.Count == targetsBefore;
+        ok &= targetRows == targetsBefore + 1;
+        ok &= !afterNewTarget.Contains("没有保存");
+
+        // 填上进程名再点应用 —— 这一次该真的存下去。
+        ((TextBox)window.FindName("TargetProcessBox")!).Text = "notepad";
+        Pump();
+        Click(window, "应用修改");
+        Pump();
+
+        var added = state.Config.Targets.FirstOrDefault(t => t.ProcessNames.Contains("notepad"));
+
+        Console.WriteLine($"  填上进程名再应用: {(added is null ? "**没存进去**" : $"存进去了（{added.Id}）")}");
+        ok &= added is not null;
+
         // ---- 二、改点别的也能存：换一条规则的启用开关
         window.SelectTab(2);
         Pump();
