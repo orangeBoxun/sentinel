@@ -31,6 +31,9 @@ public class VaultBackupTests : IDisposable
     /// <summary>Stands in for one machine: its own config path, and so its own vault directory.</summary>
     private string Machine(string name) => Path.Combine(_dir, name, "config.json");
 
+    /// <summary>测试里的"这台机器"。绑定的门要用它 —— 换个值就等于换了一台机器。</summary>
+    private static readonly byte[] Secret = Enumerable.Range(1, 32).Select(i => (byte)i).ToArray();
+
     private string BackupPath(string name) => Path.Combine(_dir, name + VaultBackup.Extension);
 
     /// <summary>A file outside any vault, for importing from.</summary>
@@ -50,7 +53,7 @@ public class VaultBackupTests : IDisposable
         var password = Password;
         var code = VaultCrypto.NewGuardianCode();
 
-        using var session = new VaultSession(machine);
+        using var session = new VaultSession(machine, null, () => Secret);
         Assert.True(session.Create(password, code).Ok);
 
         var source = Path.Combine(_dir, "source");
@@ -70,7 +73,7 @@ public class VaultBackupTests : IDisposable
     [Fact]
     public void A_backup_restores_onto_another_machine()
     {
-        var (password, _) = Seed(Machine("甲机"));
+        var (_, code) = Seed(Machine("甲机"));
         var backup = BackupPath("备份");
 
         Assert.True(VaultBackup.Export(Machine("甲机"), backup).Ok);
@@ -84,15 +87,17 @@ public class VaultBackupTests : IDisposable
         var keys = VaultKeys.Load(VaultGuard.KeysPathFor(Machine("乙机")));
         Assert.NotNull(keys);
 
-        var key = keys!.UnlockWithUserPassword(password);
-        Assert.NotNull(key);
+        // **备份里不带密码那道门**：正因为如此，导回来之后密码开不了、只能拿监护码开，
+        // 然后重设一个密码。这就是"备份不能用来撤销封印"的代价，也是它的意义。
+        Assert.Null(keys!.UnlockWithUserPassword(Password));
+        Assert.NotNull(keys.UnlockWithGuardianCode(code));
 
-        using var store = VaultStore.Open(VaultGuard.VaultRootFor(Machine("乙机")), key!);
-        Assert.NotNull(store);
-        Assert.Equal(2, store!.Entries.Count);
+        using var session = new VaultSession(Machine("乙机"), null, () => Secret);
+        Assert.True(session.UnlockWithGuardianCode(code).Ok);
+        Assert.Equal(2, session.Entries.Count);
 
         var output = Path.Combine(_dir, "out");
-        store.Extract("甲/one.txt", Path.Combine(output, "one.txt"));
+        Assert.True(session.Extract("甲/one.txt", output).Ok);
         Assert.Equal("第一个文件", File.ReadAllText(Path.Combine(output, "one.txt")));
     }
 
@@ -127,7 +132,7 @@ public class VaultBackupTests : IDisposable
         // the door back. This is what makes a backup safe to keep.
         Assert.NotNull(VaultGuard.ReadSeal(Machine("甲机")));
 
-        using var session = new VaultSession(Machine("甲机"));
+        using var session = new VaultSession(Machine("甲机"), null, () => Secret);
         Assert.True(session.IsSealed);
         Assert.False(session.UnlockWithPassword(password).Ok);
     }
@@ -250,12 +255,12 @@ public class VaultBackupTests : IDisposable
     [Fact]
     public void Restoring_really_puts_the_backups_content_back()
     {
-        Seed(Machine("甲机"));                              // two files
+        var (_, code) = Seed(Machine("甲机"));              // two files
         var backup = BackupPath("备份");
         Assert.True(VaultBackup.Export(Machine("甲机"), backup).Ok);
 
         // Add a third after the backup was taken, so the live vault and the backup differ.
-        using (var session = new VaultSession(Machine("甲机")))
+        using (var session = new VaultSession(Machine("甲机"), null, () => Secret))
         {
             Assert.True(session.UnlockWithPassword(Password).Ok);
             Assert.True(session.Import(ScratchFile("three.txt", "后来加的"), "three.txt").Ok);
@@ -264,24 +269,24 @@ public class VaultBackupTests : IDisposable
 
         Assert.True(VaultBackup.Restore(Machine("甲机"), backup).Ok);
 
-        var keys = VaultKeys.Load(VaultGuard.KeysPathFor(Machine("甲机")))!;
-        var key = keys.UnlockWithUserPassword(Password)!;
-        using var store = VaultStore.Open(VaultGuard.VaultRootFor(Machine("甲机")), key)!;
+        // 钥匙文件也被备份里那份替换了 —— 而备份不带密码门，所以这里用监护码开。
+        using var restored = new VaultSession(Machine("甲机"), null, () => Secret);
+        Assert.True(restored.UnlockWithGuardianCode(code).Ok);
 
         // Back to what the backup held: the file added afterwards is gone.
-        Assert.Equal(2, store.Entries.Count);
-        Assert.DoesNotContain(store.Entries, e => e.Path == "three.txt");
+        Assert.Equal(2, restored.Entries.Count);
+        Assert.DoesNotContain(restored.Entries, e => e.Path == "three.txt");
     }
 
     [Fact]
-    public void A_backup_carries_the_passwords_it_was_taken_with()
+    public void A_backup_does_not_carry_the_password_door()
     {
         var original = VaultCrypto.NewGuardianCode();
         var fresh = VaultCrypto.NewGuardianCode();
 
         Directory.CreateDirectory(Path.GetDirectoryName(Machine("甲机"))!);
 
-        using (var session = new VaultSession(Machine("甲机")))
+        using (var session = new VaultSession(Machine("甲机"), null, () => Secret))
         {
             Assert.True(session.Create(Password, original).Ok);
             Assert.True(session.Import(ScratchFile("a.txt", "x"), "a.txt").Ok);
@@ -291,7 +296,7 @@ public class VaultBackupTests : IDisposable
         Assert.True(VaultBackup.Export(Machine("甲机"), backup).Ok);
 
         // Change both, after the backup was taken.
-        using (var session = new VaultSession(Machine("甲机")))
+        using (var session = new VaultSession(Machine("甲机"), null, () => Secret))
         {
             Assert.True(session.UnlockWithPassword(Password).Ok);
             Assert.True(session.ChangePassword("另一个足够长的密码").Ok);
@@ -302,15 +307,46 @@ public class VaultBackupTests : IDisposable
 
         var keys = VaultKeys.Load(VaultGuard.KeysPathFor(Machine("甲机")))!;
 
-        // A backup is a snapshot, key file included, so restoring puts back the passwords that were
-        // current when it was taken. That is the thing about restoring that surprises people — they
-        // changed the password last week and the backup is from last month — which is why the
-        // confirmation says it out loud. This test is what keeps the sentence true.
-        Assert.NotNull(keys.UnlockWithUserPassword(Password));
+        // 备份是快照，监护码那道门照旧跟着走（所以恢复之后原来的监护码还能开、
+        // 后来换掉的不能）。但**密码那道门不跟着走** —— 带上它就等于造了一个
+        // 随时能撤销封印的副本。所以恢复之后只能用监护码开，然后重设密码。
+        Assert.Null(keys.UnlockWithUserPassword(Password));
         Assert.Null(keys.UnlockWithUserPassword("另一个足够长的密码"));
 
         Assert.NotNull(keys.UnlockWithGuardianCode(original));
         Assert.Null(keys.UnlockWithGuardianCode(fresh));
+
+        // 而且它自己说得清为什么："这个保险箱已经用不了了，只能拿监护码打开。"
+        using var restored = new VaultSession(Machine("甲机"), null, () => Secret);
+        var refused = restored.UnlockWithPassword(Password);
+        Assert.False(refused.Ok);
+        Assert.Contains("监护码", refused.Error ?? "");
+    }
+
+    /// <summary>
+    /// 直接拆开备份看那份钥匙：**不能有密码那道门**，监护码那道门要在。
+    /// 这是"备份不能用来撤销封印"最直接的一条证据。
+    /// </summary>
+    [Fact]
+    public void The_keys_inside_a_backup_have_no_password_door()
+    {
+        Seed(Machine("甲机"));
+
+        var backup = BackupPath("备份");
+        Assert.True(VaultBackup.Export(Machine("甲机"), backup).Ok);
+
+        using var zip = System.IO.Compression.ZipFile.OpenRead(backup);
+        var entry = zip.GetEntry("vault/keys.json");
+
+        Assert.NotNull(entry);
+
+        using var reader = new StreamReader(entry!.Open());
+        var json = reader.ReadToEnd();
+
+        Assert.DoesNotContain("WrappedByUser", json);
+        Assert.DoesNotContain("UserSalt", json);
+        Assert.Contains("WrappedByGuardian", json);
+        Assert.Contains("SealedToGuardian", json);
     }
 
     [Fact]

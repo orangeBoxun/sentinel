@@ -64,15 +64,29 @@ public static class VaultBackup
 
         try
         {
-            var files = Directory
-                .EnumerateFiles(root, "*", SearchOption.AllDirectories)
-                .Where(path => IsVaultContent(root, path))
-                .Select(path => new BackupFile(
-                    Relative(root, path),
-                    HashFile(path),
-                    new FileInfo(path).Length))
-                .OrderBy(file => file.Name, StringComparer.Ordinal)
-                .ToList();
+            // 钥匙文件单独写一份**不带密码门**的（见 VaultKeys.ToBytesWithoutUserDoor）：
+            // 其余文件照原样逐字节搬。
+            var substitutions = new Dictionary<string, byte[]>(StringComparer.OrdinalIgnoreCase);
+            var files = new List<BackupFile>();
+
+            foreach (var path in Directory
+                         .EnumerateFiles(root, "*", SearchOption.AllDirectories)
+                         .Where(path => IsVaultContent(root, path)))
+            {
+                var name = Relative(root, path);
+
+                if (string.Equals(name, KeysFileName, StringComparison.OrdinalIgnoreCase)
+                    && StripUserDoor(root, when) is { } stripped)
+                {
+                    substitutions[name] = stripped;
+                    files.Add(new BackupFile(name, HashBytes(stripped), stripped.Length));
+                    continue;
+                }
+
+                files.Add(new BackupFile(name, HashFile(path), new FileInfo(path).Length));
+            }
+
+            files = files.OrderBy(file => file.Name, StringComparer.Ordinal).ToList();
 
             var manifest = new BackupManifest(FormatVersion, when.ToString("O"), files);
 
@@ -85,8 +99,20 @@ public static class VaultBackup
                 WriteManifest(zip, manifest);
 
                 foreach (var file in files)
-                    zip.CreateEntryFromFile(Path.Combine(root, file.Name.Replace('/', Path.DirectorySeparatorChar)),
-                        $"{VaultFolder}/{file.Name}", CompressionLevel.Optimal);
+                {
+                    var entry = $"{VaultFolder}/{file.Name}";
+
+                    if (substitutions.TryGetValue(file.Name, out var bytes))
+                    {
+                        using var stream = zip.CreateEntry(entry, CompressionLevel.Optimal).Open();
+                        stream.Write(bytes);
+                        continue;
+                    }
+
+                    zip.CreateEntryFromFile(
+                        Path.Combine(root, file.Name.Replace('/', Path.DirectorySeparatorChar)),
+                        entry, CompressionLevel.Optimal);
+                }
             }
 
             if (!IoRetry.Try(() => File.Move(temporary, destination, overwrite: true)))
@@ -350,6 +376,26 @@ public static class VaultBackup
         using var stream = File.OpenRead(path);
         return Convert.ToHexString(SHA256.HashData(stream)).ToLowerInvariant();
     }
+
+    private static byte[]? StripUserDoor(string root, DateTimeOffset when)
+    {
+        try
+        {
+            var keys = VaultKeys.Load(Path.Combine(root, KeysFileName));
+
+            // 读不出来就别自作聪明：照原样带上，总比导出一个空的强。
+            return keys?.ToBytesWithoutUserDoor(when,
+                "这是备份里的那一份。备份不带「密码那道门」—— 否则导回来就能把封印撤掉。"
+                + "要用它，请拿监护码打开，然后重设密码。");
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static string HashBytes(byte[] bytes) =>
+        Convert.ToHexString(SHA256.HashData(bytes)).ToLowerInvariant();
 
     private static string HashEntry(ZipArchiveEntry entry)
     {

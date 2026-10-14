@@ -31,7 +31,10 @@ public class VaultSessionTests : IDisposable
         }
     }
 
-    private VaultSession Session() => new(_config);
+    /// <summary>测试里的"这台机器"。绑定的门要用它 —— 会话由它去问"本机秘密"。</summary>
+    private static readonly byte[] Secret = Enumerable.Range(1, 32).Select(i => (byte)i).ToArray();
+
+    private VaultSession Session() => new(_config, null, () => Secret);
 
     private string ScratchFile(string name, string content)
     {
@@ -423,7 +426,7 @@ public class VaultSessionTests : IDisposable
         VaultGuard.Seal(_config, "别处发现的");
 
         // A check that says "fine" must not reopen a door the files already closed.
-        using var session2 = new VaultSession(_config, () => GuardStatus.Intact);
+        using var session2 = new VaultSession(_config, () => GuardStatus.Intact, () => Secret);
         Assert.True(session2.IsSealed);
     }
 
@@ -477,7 +480,7 @@ public class VaultSessionTests : IDisposable
 
         // Creating one asks the second question, so "nothing is guarding this machine" is a refusal
         // rather than a vault that would refuse to open the moment it was needed.
-        using var session = new VaultSession(bare, () => GuardStatus.SealedWith("Sentinel 服务没有在运行。"));
+        using var session = new VaultSession(bare, () => GuardStatus.SealedWith("Sentinel 服务没有在运行。"), () => Secret);
 
         Assert.False(session.Create("一个足够长的密码", VaultCrypto.NewGuardianCode()).Ok);
         Assert.False(VaultGuard.VaultExists(bare));

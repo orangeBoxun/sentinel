@@ -52,6 +52,11 @@ public static class VaultGuard
     public const string MaintenanceFileName = ".maintenance";
 
     /// <summary>
+    /// 本机秘密所在的文件。**放在 vault 目录之外** —— 所以"备份/拷贝 vault 目录"带不走它。
+    /// </summary>
+    public const string MachineSecretFileName = ".vault-machine";
+
+    /// <summary>
     /// How long the Service has to be gone before its absence counts as a stoppage.
     ///
     /// A crash is recovered by the Service's own failure actions in about five seconds, and that
@@ -75,6 +80,69 @@ public static class VaultGuard
     public static string SealPathFor(string configPath) => Path.Combine(DirectoryFor(configPath), SealFileName);
 
     public static string AlivePathFor(string configPath) => Path.Combine(DirectoryFor(configPath), AliveFileName);
+
+    public static string MachineSecretPathFor(string configPath) =>
+        Path.Combine(DirectoryFor(configPath), MachineSecretFileName);
+
+    /// <summary>
+    /// 本机秘密：密码那道门绑着它（见 <see cref="VaultCrypto.DeriveBoundKey"/>）。
+    ///
+    /// <para>
+    /// 它存在的唯一理由是"封印之后，旧的 vault 副本也打不开"：封印会把它一起销毁
+    /// （见 <see cref="SealVault"/>），卸载同样。存的是 32 字节随机数，文件只给 SYSTEM 和管理员
+    /// 读 —— 所以"顺手拷一份 vault 目录"不再够用，还得专门把它弄到手。
+    /// </para>
+    /// </summary>
+    public static byte[]? LoadOrCreateMachineSecret(string configPath)
+    {
+        var path = MachineSecretPathFor(configPath);
+
+        if (File.Exists(path))
+        {
+            try
+            {
+                var buffer = new byte[64];
+
+                if (Convert.TryFromBase64String(File.ReadAllText(path).Trim(), buffer, out var written)
+                    && written == VaultCrypto.KeySize)
+                {
+                    return buffer[..VaultCrypto.KeySize];
+                }
+            }
+            catch
+            {
+                // 落到下面那句 return null。
+            }
+
+            // **读不出来就返回"没有"，绝不覆盖。** 这份秘密绑着用户那道门：悄悄换一份新的，
+            // 等于把保险箱的密码门废掉 —— 而表现只是"密码不对"，没人会想到是这里。
+            // 读不出来通常是权限问题（比如服务不是以 SYSTEM 在跑）。
+            return null;
+        }
+
+        var secret = VaultCrypto.NewKey();
+        File.WriteAllText(path, Convert.ToBase64String(secret));
+
+        return secret;
+    }
+
+    /// <summary>销毁本机秘密。封印和卸载都会调它 —— 这一步之后，旧的 vault 副本就只认监护码了。</summary>
+    public static bool DestroyMachineSecret(string configPath)
+    {
+        try
+        {
+            var path = MachineSecretPathFor(configPath);
+
+            if (File.Exists(path))
+                File.Delete(path);
+
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
+    }
 
     public static string MaintenancePathFor(string configPath) => Path.Combine(DirectoryFor(configPath), MaintenanceFileName);
 
@@ -197,6 +265,11 @@ public static class VaultGuard
             return false;
 
         var sealedNow = Seal(configPath, reason, at);
+
+        // **本机秘密跟着封印一起销毁。** 这才是"旧备份也打不开"的道理所在：
+        // 光把用户那道门从钥匙文件里删掉不够 —— 旧的钥匙文件副本里那道门还在，
+        // 而它解开需要的那份秘密现在没了。
+        DestroyMachineSecret(configPath);
 
         try
         {

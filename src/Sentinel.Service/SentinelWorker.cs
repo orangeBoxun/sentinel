@@ -50,7 +50,16 @@ public sealed class SentinelWorker : BackgroundService
     /// 看门狗多久没动静就算它被停掉了。它一分钟跑一次，这里给足容忍 ——
     /// 误判的代价是保险箱被封印（只有监护人码能开），漏判的代价是少了一分钟的发现时间。
     /// </summary>
-    private static readonly TimeSpan WatchdogGoneAfter = TimeSpan.FromMinutes(5);
+    /// <summary>
+    /// 心跳多久没动值得说一声。**只是说一声** —— 见 CheckWatchdogAlive 里为什么它不再是封印的判据。
+    /// </summary>
+    private static readonly TimeSpan WatchdogSilenceWorthMentioning = TimeSpan.FromMinutes(15);
+
+    /// <summary>
+    /// 服务刚起来的这几分钟不判看门狗。安装/升级期间任务会被删掉重建，刚重建的任务
+    /// 还没跑第一轮 —— 那时候"任务不在"是正常的，不是有人在拆。
+    /// </summary>
+    private static readonly TimeSpan WatchdogGraceAfterStart = TimeSpan.FromMinutes(3);
 
     /// <summary>
     /// How often the liveness record is rewritten. Short enough that a crash — recovered by the
@@ -84,7 +93,7 @@ public sealed class SentinelWorker : BackgroundService
         // Must run before the first write: this compares the record left by the previous life of
         // this Service against how long the machine has been up.
         if (VaultGuard.DetectStoppage(_config.Path, DateTimeOffset.Now,
-                TimeSpan.FromMilliseconds(Environment.TickCount64)) is { } stoppage)
+                SystemUptime.Awake()) is { } stoppage)
         {
             _log.LogError("保险箱：{Reason}", stoppage);
             VaultGuard.SealVault(_config.Path, stoppage);
@@ -403,6 +412,28 @@ public sealed class SentinelWorker : BackgroundService
 
                 return IpcResponse.Failure(enableError ?? "enable refused");
 
+            case Ipc.VaultSecret:
+            {
+                // 保险箱的密码那道门绑着这份秘密。服务是唯一该拿到它的人（也确实是唯一收得紧权限的：
+                // 文件建好之后只给 SYSTEM 和管理员读）。
+                var secretPath = VaultGuard.MachineSecretPathFor(_config.Path);
+                var secret = VaultGuard.LoadOrCreateMachineSecret(_config.Path);
+
+                if (secret is null)
+                    return IpcResponse.Failure("这台机器上那份秘密读不出来（权限？）");
+
+                // 权限只在自己是 SYSTEM 的时候收 —— 否则收完这个进程自己也读不了了。
+                // （控制台里以普通身份跑的时候属正常，不是错误。）
+                if (Watchdog.IsSystem() && !FileAcl.RestrictToSystemAndAdmins(secretPath))
+                {
+                    _log.LogWarning(
+                        "本机秘密的权限没收紧（{Path}）—— 它本该只有 SYSTEM 和管理员能读。",
+                        secretPath);
+                }
+
+                return IpcResponse.Success(Convert.ToBase64String(secret));
+            }
+
             case Ipc.ReleaseProtection:
                 if (_config.TryReleaseProtection(request.Token, out var releaseError, out var releaseRequest, out var detail))
                 {
@@ -478,6 +509,12 @@ public sealed class SentinelWorker : BackgroundService
 
     private bool _watchdogSealReported;
 
+    /// <summary>这个服务进程是什么时候起来的。看门狗那条判据要拿它做启动宽限。</summary>
+    private readonly DateTimeOffset _startedAt = DateTimeOffset.UtcNow;
+
+    /// <summary>上一次就"看门狗在空转"出声的时刻，用来节流。</summary>
+    private DateTimeOffset? _watchdogSilenceReportedAt;
+
     /// <summary>
     /// 看门狗还在跑吗。不在跑就**封印保险箱**。
     ///
@@ -496,27 +533,49 @@ public sealed class SentinelWorker : BackgroundService
     /// <c>-NoWatchdog</c>，都不该在任何一次正常安装之后就被封印。
     /// </para>
     /// </summary>
+    /// <summary>
+    /// 看门狗还在不在。
+    ///
+    /// <para>
+    /// 判据是<b>计划任务真的不见了</b> —— 那才叫有人在拆。以前拿"心跳文件旧了"当判据，
+    /// 而心跳变旧有一大堆无害的原因，最常见的是合盖待机：机器没在跑，任务和服务都写不出心跳，
+    /// 醒来时那个文件就已经"过期"了。2026-10-12 就这样误封过一次真实的保险箱
+    /// （合盖 8 分钟，而阈值是 5 分钟）—— 证据和后果差得太远。
+    /// </para>
+    /// <para>
+    /// 心跳旧了仍然要说，只是不再拿它当证据：任务在、心跳却长时间不动，说明看门狗在空转，
+    /// 那件事值得知道（日志和托盘都出声），但不值得把保险箱封掉。
+    /// </para>
+    /// </summary>
     private void CheckWatchdogAlive()
     {
         if (VaultGuard.InMaintenance(_config.Path))
             return;   // 装/卸期间服务本来就会被停一会儿，看门狗也不该在这时候被追究
 
-        DateTimeOffset? lastAlive = null;
+        var lastAlive = ReadWatchdogAlive();
+        TimeSpan? silence = lastAlive is null ? null : DateTimeOffset.UtcNow - lastAlive.Value;
 
-        try
-        {
-            var path = VaultGuard.WatchdogAlivePathFor(_config.Path);
+        // 心跳长时间不动：出声。待机、关机、机器忙都会这样，所以这条**只是提醒**。
+        WarnIfWatchdogSilent(silence);
 
-            if (File.Exists(path))
-                lastAlive = new DateTimeOffset(File.GetLastWriteTimeUtc(path), TimeSpan.Zero);
-        }
-        catch (Exception ex)
-        {
-            _log.LogWarning("读看门狗的存活记录失败：{Error}", ex.Message);
+        // **探不出任务在不在的时候，不谈封印。** 这条判据问的是"看门狗任务还在不在"，
+        // 而这个问题只有 SYSTEM 问得出来：普通权限下 schtasks 返回的是"拒绝访问"，
+        // 和"任务不存在"长得一模一样。把"看不懂"当成"被拆了"，就是拿一次误封去换一次猜错。
+        if (!Watchdog.IsSystem())
             return;
-        }
 
-        if (!WatchdogHealth.IsGone(lastAlive, DateTimeOffset.UtcNow, WatchdogGoneAfter))
+        var registered = ScheduledTask.Exists(ScheduledTask.WatchdogTaskName);
+
+        // "停用"和"删掉"是一回事：都是把它关掉了，而停用只需要点一下。
+        var disabled = WatchdogTaskDefinition.IsDisabled(
+            ScheduledTask.ReadDefinition(ScheduledTask.WatchdogTaskName));
+
+        if (registered && !disabled)
+            return;
+
+        // 服务刚起来的这几分钟不封：安装/升级期间任务会被删掉重建，刚重建的任务还没跑第一轮，
+        // 那时"任务不在"是正常的。出声不受这条限制 —— 说一声是廉价的。
+        if (DateTimeOffset.UtcNow - _startedAt < WatchdogGraceAfterStart)
             return;
 
         // 封印是幂等的（保留最初的原因），但日志没必要每分钟重复一遍。
@@ -525,16 +584,55 @@ public sealed class SentinelWorker : BackgroundService
 
         _watchdogSealReported = true;
 
-        var silence = DateTimeOffset.UtcNow - lastAlive!.Value;
-
-        _log.LogWarning(
-            "看门狗已经 {Minutes:0} 分钟没有运行过（存活记录停在 {At:u}）—— 封印保险箱",
-            silence.TotalMinutes, lastAlive.Value);
+        _log.LogWarning("看门狗计划任务{How}（最后一次心跳 {At:u}）—— 封印保险箱",
+            registered ? "被停用了" : "已经不在了", lastAlive);
 
         Watchdog.SealVault(_config.Path,
-            $"看门狗计划任务在 {lastAlive.Value:yyyy-MM-dd HH:mm} UTC 之后就没再运行过。"
-            + "它每分钟核对一次服务的权限和服务本身，被停掉之后就没有人再守着这套东西了。"
+            $"看门狗计划任务{(registered ? "已被停用" : "已被删除")}。"
+            + (lastAlive is null
+                ? "它本该每分钟写一次存活记录，而现在这个任务根本不在了。"
+                : $"它最后一次运行是 {lastAlive.Value:yyyy-MM-dd HH:mm} UTC。")
+            + "没有它就没有人每分钟核对服务的权限和服务本身了。"
             + "保险箱因此封印：**只有监护人解锁码**能打开它，密码不再管用。");
+    }
+
+    /// <summary>心跳长时间不动：说一声。**不做别的** —— 待机、关机、机器忙都会让它变旧。</summary>
+    private void WarnIfWatchdogSilent(TimeSpan? silence)
+    {
+        if (silence is not { } gap || gap < WatchdogSilenceWorthMentioning)
+        {
+            _watchdogSilenceReportedAt = null;   // 恢复了，下次沉默重新报
+            return;
+        }
+
+        var now = DateTimeOffset.UtcNow;
+
+        if (_watchdogSilenceReportedAt is { } last && now - last < TimeSpan.FromMinutes(30))
+            return;
+
+        _watchdogSilenceReportedAt = now;
+
+        _log.LogWarning(
+            "看门狗任务在，但已经 {Minutes:0} 分钟没写存活记录了 —— 它在空转。"
+            + "（待机、关机、机器忙都会这样；这条只是提醒，不封印保险箱。）",
+            gap.TotalMinutes);
+    }
+
+    private DateTimeOffset? ReadWatchdogAlive()
+    {
+        try
+        {
+            var path = VaultGuard.WatchdogAlivePathFor(_config.Path);
+
+            return File.Exists(path)
+                ? new DateTimeOffset(File.GetLastWriteTimeUtc(path), TimeSpan.Zero)
+                : null;
+        }
+        catch (Exception ex)
+        {
+            _log.LogWarning("读看门狗的存活记录失败：{Error}", ex.Message);
+            return null;
+        }
     }
 
     // ------------------------------------------------------------------ 会话守护

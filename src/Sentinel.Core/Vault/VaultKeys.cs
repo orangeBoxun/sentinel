@@ -60,29 +60,44 @@ public sealed class VaultKeys
 
     public VaultState State { get; set; } = VaultState.Normal;
 
+    /// <summary>
+    /// 密码那道门是不是**绑在这台机器上**（见 <see cref="VaultCrypto.DeriveBoundKey"/>）。
+    ///
+    /// <para>
+    /// 老文件（这个改动之前建的）是 false：只用密码派生。它们照旧能开，第一次成功打开时会被
+    /// 就地升级成绑定的 —— 不声不响地把门换掉，内容一个字节都不动。
+    /// </para>
+    /// </summary>
+    public bool MachineBound { get; set; }
+
     /// <summary>When it was sealed, for the message that explains why the password stopped working.</summary>
     public string? SealedAt { get; set; }
 
     /// <summary>Why it was sealed, in the words of whatever noticed. Shown to the user.</summary>
     public string? SealedReason { get; set; }
 
-    public static VaultKeys Create(string userPassword, string guardianCode, int iterations = VaultCrypto.DefaultIterations) =>
-        ReWrap(VaultCrypto.NewKey(), userPassword, guardianCode, iterations);
+    public static VaultKeys Create(
+        string userPassword, string guardianCode, byte[] machineSecret,
+        int iterations = VaultCrypto.DefaultIterations) =>
+        ReWrap(VaultCrypto.NewKey(), userPassword, guardianCode, machineSecret, iterations);
 
     /// <summary>
     /// Puts new wrappings around an existing data key. Used both for a new vault and for coming back
     /// from a seal with the guardian code: the key is the same, so the files come back untouched,
     /// and only the two doors are rebuilt.
     /// </summary>
-    public static VaultKeys ReWrap(byte[] key, string userPassword, string guardianCode, int iterations = VaultCrypto.DefaultIterations)
+    public static VaultKeys ReWrap(
+        byte[] key, string userPassword, string guardianCode, byte[] machineSecret,
+        int iterations = VaultCrypto.DefaultIterations)
     {
         var normalized = VaultCrypto.NormalizeGuardianCode(guardianCode)
             ?? throw new ArgumentException("监护码格式不对。", nameof(guardianCode));
 
-        var keys = new VaultKeys { Iterations = iterations };
+        var keys = new VaultKeys { Iterations = iterations, MachineBound = true };
 
         keys.UserSalt = VaultCrypto.NewSalt();
-        keys.WrappedByUser = VaultCrypto.Wrap(key, VaultCrypto.DeriveKey(userPassword, keys.UserSalt, iterations));
+        keys.WrappedByUser = VaultCrypto.Wrap(
+            key, VaultCrypto.DeriveBoundKey(userPassword, keys.UserSalt, iterations, machineSecret));
 
         keys.GuardianSalt = VaultCrypto.NewSalt();
         keys.WrappedByGuardian = VaultCrypto.Wrap(key, VaultCrypto.DeriveKey(normalized, keys.GuardianSalt, iterations));
@@ -103,10 +118,13 @@ public sealed class VaultKeys
     /// user password again must not quietly put back the door that was taken away.
     /// </para>
     /// </summary>
-    public void SetUserPassword(byte[] key, string password)
+    public void SetUserPassword(byte[] key, string password, byte[] machineSecret)
     {
         UserSalt = VaultCrypto.NewSalt();
-        WrappedByUser = VaultCrypto.Wrap(key, VaultCrypto.DeriveKey(password, UserSalt, Iterations));
+        WrappedByUser = VaultCrypto.Wrap(
+            key, VaultCrypto.DeriveBoundKey(password, UserSalt, Iterations, machineSecret));
+
+        MachineBound = true;
     }
 
     /// <summary>Re-wraps the data key under a new guardian code, leaving the user's wrapping alone.</summary>
@@ -119,14 +137,43 @@ public sealed class VaultKeys
         WrappedByGuardian = VaultCrypto.Wrap(key, VaultCrypto.DeriveKey(normalized, GuardianSalt, Iterations));
     }
 
-    /// <summary>Null when the password is wrong — or when the vault has been sealed, which looks the same from here.</summary>
-    public byte[]? UnlockWithUserPassword(string password)
+    /// <summary>
+    /// 用密码开门。<paramref name="machineSecret"/> 是这台机器上那份秘密 ——
+    /// 绑定的门**缺了它开不了**，那正是"旧备份换台机器就作废"的原理。
+    ///
+    /// <para>
+    /// Null when the password is wrong — or when the vault has been sealed, which looks the same
+    /// from here. 老文件（<see cref="MachineBound"/> 为 false）不需要那份秘密。
+    /// </para>
+    /// </summary>
+    public byte[]? UnlockWithUserPassword(string password, byte[]? machineSecret = null)
     {
         if (State != VaultState.Normal || UserSalt is null || WrappedByUser is null)
             return null;
 
-        var derived = VaultCrypto.DeriveKey(password, UserSalt, Iterations);
+        if (MachineBound && machineSecret is null)
+            return null;   // 绑了机器却没拿到那份秘密：开不了就别装作开得了
+
+        var derived = MachineBound
+            ? VaultCrypto.DeriveBoundKey(password, UserSalt, Iterations, machineSecret!)
+            : VaultCrypto.DeriveKey(password, UserSalt, Iterations);
+
         return VaultCrypto.TryUnwrap(WrappedByUser, derived, out var key) ? key : null;
+    }
+
+    /// <summary>
+    /// 就地升级：把"只用密码"的老门换成绑定机器的新门。内容一个字节都不动，只换包装。
+    ///
+    /// <para>
+    /// 只在**已经用密码成功打开**之后调用 —— 那时候手上就有那把钥匙，换包装是安全的。
+    /// </para>
+    /// </summary>
+    public void BindToMachine(byte[] key, string password, byte[] machineSecret)
+    {
+        if (MachineBound)
+            return;
+
+        SetUserPassword(key, password, machineSecret);
     }
 
     public byte[]? UnlockWithGuardianCode(string code)
@@ -162,8 +209,50 @@ public sealed class VaultKeys
         return true;
     }
 
-    /// <summary>True when the user's password is expected to work.</summary>
+    /// <summary>True when the user's password is expected to work. Not part of the file.</summary>
+    [JsonIgnore]
     public bool UserDoorAvailable => State == VaultState.Normal && WrappedByUser is not null;
+
+    /// <summary>
+    /// 这份钥匙的字节，但**不带"密码那道门"**。
+    ///
+    /// <para>
+    /// 给备份用的。封印的原理是"把这道门从钥匙文件里删掉"，而备份是逐字节快照 ——
+    /// 带上它，就等于额外造了一个随时能把封印撤销的副本（导回来、或者写个客户端直接读它，
+    /// 密码又管用了）。备份要防的是"盘坏了/卸载了"，而恢复时用监护码就够了：
+    /// 那正是监护码存在的意义。
+    /// </para>
+    /// <para>
+    /// 顺带把状态标成"已封印到监护码"，理由也写上 —— 这样恢复出来那份一旦有人拿密码去开，
+    /// 界面会说"只能拿监护码打开"，而不是含糊的"密码不对"。
+    /// </para>
+    /// </summary>
+    public byte[] ToBytesWithoutUserDoor(DateTimeOffset when, string reason)
+    {
+        var copy = new VaultKeys
+        {
+            Version = Version,
+            Iterations = Iterations,
+            GuardianSalt = GuardianSalt,
+            WrappedByGuardian = WrappedByGuardian,
+            State = VaultState.SealedToGuardian,
+            SealedAt = when.ToString("yyyy-MM-dd HH:mm:ss"),
+            SealedReason = reason,
+
+            // 这两项**故意留空** —— 就是"那道门"本身。
+            UserSalt = null,
+            WrappedByUser = null,
+        };
+
+        // 空的项干脆不写出来：读那份 JSON 的人（包括将来排查问题的人）一眼就能看出
+        // "这里没有密码门"，而不是看见一对 null 去猜它是什么意思。
+        var options = new JsonSerializerOptions(Options)
+        {
+            DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
+        };
+
+        return System.Text.Encoding.UTF8.GetBytes(JsonSerializer.Serialize(copy, options));
+    }
 
     public static VaultKeys? Load(string path)
     {

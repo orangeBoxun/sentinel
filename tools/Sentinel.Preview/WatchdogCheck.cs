@@ -7,12 +7,18 @@ using Sentinel.Core.Vault;
 namespace Sentinel.Preview;
 
 /// <summary>
-/// 「看门狗被停掉 → 保险箱封印」这条规则，两个方向都要验。
+/// 「什么时候才该因为看门狗而封印保险箱」这条规则，要验的是**不该封的时候没封**。
 ///
 /// <para>
-/// <b>误判的代价很贵</b>：封印意味着保险箱只能用监护人解锁码打开，而那串码在另一台设备上。
-/// 所以比起"该封的时候封了"，更该证明的是"不该封的时候没封" —— 比如一台从来没装过看门狗的
-/// 机器，或者装的时候用了 <c>-NoWatchdog</c>，都绝不能在正常安装之后被封印。
+/// <b>误判的代价是不可逆的</b>：封印之后保险箱只能用监护人解锁码打开，而那串码在另一台设备上。
+/// 2026-10-12 就真封错过一次：用户合上笔记本待机 8 分钟，看门狗任务和服务都停了，醒来时
+/// 心跳文件"过期" 8 分钟（阈值是 5 分钟）→ 保险箱被封印。所以心跳变旧**不能**当判据，
+/// 判据是"计划任务真的不见了"。
+/// </para>
+/// <para>
+/// <b>"任务不见了"那一个方向只能靠人去看，不能在这里造。</b> 计划任务是全机器一个名字，
+/// 检查去删它就是在动用户真装的那一套 —— 而删掉之后服务会补一个封印，封的是**真实的保险箱**。
+/// 这正是这条检查踩过的坑，所以这里只验"心跳停/从来没有心跳 → 不许封印"。
 /// </para>
 /// <para>
 /// 隔离环境：自己的管道名、临时目录里的配置。不碰用户装好的那一套。
@@ -34,11 +40,11 @@ internal static class WatchdogCheck
 
         var ok = true;
 
-        // ---- 一、看门狗的心跳停了 → 该封印
-        var frozen = Path.Combine(workDir, "停了");
+        // ---- 一、心跳停了一小时，但任务还在 → **不许**封印
+        var frozen = Path.Combine(workDir, "心跳停了");
         Prepare(frozen, createVault: true);
 
-        // 心跳停在一小时前：看门狗不再运行。
+        // 心跳停在一小时前。
         //
         // 判据是文件的**修改时间**（服务读的是 File.GetLastWriteTimeUtc），所以光把旧时刻写进
         // 内容里没用 —— 那只能骗人，骗不过判断。得把时间戳本身改到过去。
@@ -46,28 +52,32 @@ internal static class WatchdogCheck
         File.WriteAllText(alive, DateTimeOffset.UtcNow.AddHours(-1).ToString("O"));
         File.SetLastWriteTimeUtc(alive, DateTime.UtcNow.AddHours(-1));
 
-        var sealedNow = RunServiceAndWait(serviceExe, frozen, () =>
-            File.Exists(VaultGuard.SealPathFor(Path.Combine(frozen, "config.json"))), TimeSpan.FromSeconds(90));
+        var sealedWrongly = RunServiceAndWait(serviceExe, frozen, () =>
+            File.Exists(VaultGuard.SealPathFor(Path.Combine(frozen, "config.json"))), TimeSpan.FromSeconds(45), out var frozenLog);
 
-        var reason = sealedNow
-            ? VaultGuard.ReadSeal(Path.Combine(frozen, "config.json")) ?? "(读不出来)"
-            : "(没有封印)";
+        Report(ref ok, "心跳停了一小时（机器待机过）→ 不封印", !sealedWrongly,
+            sealedWrongly
+                ? $"**被误判了**：{Compact(VaultGuard.ReadSeal(Path.Combine(frozen, "config.json")) ?? "")}"
+                : "没有封印，对 —— 心跳旧不是拆解的证明");
 
-        Report(ref ok, "看门狗停了 → 保险箱被封印", sealedNow, Compact(reason));
+        // 而且要能看出它走的是哪条路：心跳旧 → 只出声提醒（"空转"），不是封印。
+        var warned = frozenLog.Any(l => l.Contains("空转"));
+        Report(ref ok, "心跳旧时它只是出个声（而不是动封印）", warned,
+            warned ? "日志里说了'它在空转'" : "日志里没看到那句提醒");
 
         // ---- 二、从来没跑过看门狗（老安装、或者 -NoWatchdog）→ **不许**封印
         var fresh = Path.Combine(workDir, "新装");
         Prepare(fresh, createVault: true);
 
-        var sealedWrongly = RunServiceAndWait(serviceExe, fresh, () =>
-            File.Exists(VaultGuard.SealPathFor(Path.Combine(fresh, "config.json"))), TimeSpan.FromSeconds(45));
+        var sealedFresh = RunServiceAndWait(serviceExe, fresh, () =>
+            File.Exists(VaultGuard.SealPathFor(Path.Combine(fresh, "config.json"))), TimeSpan.FromSeconds(45), out _);
 
-        Report(ref ok, "从来没有过心跳 → 不封印（这是误判防线）", !sealedWrongly,
-            sealedWrongly ? "**被误判了** —— 正常安装之后保险箱就被封了" : "没有封印，对");
+        Report(ref ok, "从来没有过心跳 → 不封印（这是误判防线）", !sealedFresh,
+            sealedFresh ? "**被误判了** —— 正常安装之后保险箱就被封了" : "没有封印，对");
 
         Console.WriteLine();
         Console.WriteLine(ok
-            ? "结论：停掉看门狗会被封印，而正常安装不会 —— 两个方向都对。"
+            ? "结论：心跳变旧（待机、机器忙）不再封印保险箱 —— 误封那条路堵上了。"
             : "结论：有一样不对，见上面。");
 
         return ok ? 0 : 1;
@@ -94,7 +104,8 @@ internal static class WatchdogCheck
     }
 
     /// <summary>起一个隔离的服务，等 <paramref name="until"/> 成立（或者等超时），然后把它停掉。</summary>
-    private static bool RunServiceAndWait(string exe, string dir, Func<bool> until, TimeSpan timeout)
+    private static bool RunServiceAndWait(
+        string exe, string dir, Func<bool> until, TimeSpan timeout, out List<string> log)
     {
         var pipe = $"Sentinel.Test.WatchdogCheck.{Environment.ProcessId}.{Path.GetFileName(dir)}";
         var output = new List<string>();
@@ -160,15 +171,15 @@ internal static class WatchdogCheck
                 // 收尾，出错无所谓。
             }
 
+            lock (output)
+                log = [.. output];
+
             if (!reached)
             {
                 Console.WriteLine($"  [服务 {Path.GetFileName(dir)} 的输出，退出={service.HasExited}]");
 
-                lock (output)
-                {
-                    foreach (var line in output.TakeLast(15))
-                        Console.WriteLine("    " + line);
-                }
+                foreach (var line in log.TakeLast(15))
+                    Console.WriteLine("    " + line);
             }
         }
     }

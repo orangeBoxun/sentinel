@@ -38,7 +38,7 @@ public partial class VaultWindow : Window
         InitializeComponent();
 
         _state = state;
-        _session = new VaultSession(state.ConfigPath, ExtraGuardCheck);
+        _session = new VaultSession(state.ConfigPath, ExtraGuardCheck, state.VaultSecret);
 
         Refresh();
     }

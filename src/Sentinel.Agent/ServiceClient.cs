@@ -145,6 +145,30 @@ public sealed class ServiceClient
         return response.Ok;
     }
 
+    /// <summary>
+    /// 这台机器上那份秘密 —— 保险箱的密码那道门绑着它。拿不到（服务没在跑）时返回 false：
+    /// 那就只能用监护码开保险箱。
+    /// </summary>
+    public bool TryGetVaultSecret(out byte[]? secret)
+    {
+        secret = null;
+
+        var reply = Send(new IpcRequest(Ipc.VaultSecret));
+
+        if (!reply.Ok || reply.Payload is null)
+            return false;
+
+        try
+        {
+            secret = Convert.FromBase64String(reply.Payload);
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
     public bool TryKill(int processId, out string? error)
     {
         var reply = Send(new IpcRequest(Ipc.RequestKill, processId.ToString()));

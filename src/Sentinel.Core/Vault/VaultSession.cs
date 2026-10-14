@@ -35,6 +35,12 @@ public sealed class VaultSession : IDisposable
     /// <summary>Short enough to be easy to live with, long enough that the KDF is not the weak part.</summary>
     public const int MinimumPasswordLength = 8;
 
+    /// <summary>
+    /// 这台机器上那份秘密的来源（由服务持有）。密码那道门绑着它 —— 见 VaultCrypto.DeriveBoundKey。
+    /// 拿不到它就只剩监护码那条路。
+    /// </summary>
+    private readonly Func<byte[]?>? _machineSecret;
+
     private readonly string _configPath;
     private readonly Func<GuardStatus>? _extraCheck;
 
@@ -47,10 +53,14 @@ public sealed class VaultSession : IDisposable
     /// in the Agent this asks whether the Service is still there and still answering. It can add a
     /// seal but never remove one.
     /// </param>
-    public VaultSession(string configPath, Func<GuardStatus>? extraCheck = null)
+    public VaultSession(
+        string configPath,
+        Func<GuardStatus>? extraCheck = null,
+        Func<byte[]?>? machineSecret = null)
     {
         _configPath = configPath;
         _extraCheck = extraCheck;
+        _machineSecret = machineSecret;
 
         _keys = VaultKeys.Load(VaultGuard.KeysPathFor(configPath));
         Phase = _keys is null ? VaultPhase.NotSetUp : VaultPhase.Locked;
@@ -110,6 +120,24 @@ public sealed class VaultSession : IDisposable
         return status;
     }
 
+    /// <summary>本机秘密；拿不到返回 null（服务没在跑，或者还没建过）。</summary>
+    private byte[]? Secret()
+    {
+        try
+        {
+            return _machineSecret?.Invoke();
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static VaultResult NoSecret(string doing) =>
+        VaultResult.Fail(
+            $"{doing}需要这台机器上那份秘密，而现在拿不到它（Sentinel 服务没在运行？）。"
+            + "密码那道门跟机器绑在一起：要么把服务起回来，要么用监护码打开。");
+
     // ------------------------------------------------------------------ 建立
 
     /// <summary>Creates the vault and opens it. There is no way to do this without a guardian code.</summary>
@@ -129,10 +157,14 @@ public sealed class VaultSession : IDisposable
         if (VaultCrypto.NormalizeGuardianCode(guardianCode) is null)
             return VaultResult.Fail("监护码格式不对。");
 
+        var secret = Secret();
+        if (secret is null)
+            return NoSecret("建立保险箱");
+
         try
         {
-            var keys = VaultKeys.Create(password, guardianCode);
-            var key = keys.UnlockWithUserPassword(password);
+            var keys = VaultKeys.Create(password, guardianCode, secret);
+            var key = keys.UnlockWithUserPassword(password, secret);
             if (key is null)
                 return VaultResult.Fail("刚写好的钥匙打不开 —— 保险箱没有被创建。");
 
@@ -169,8 +201,32 @@ public sealed class VaultSession : IDisposable
         if (!_keys.UserDoorAvailable)
             return VaultResult.Fail("这个保险箱已经用不了了，只能拿监护码打开。");
 
-        var key = _keys.UnlockWithUserPassword(password);
-        return key is null ? VaultResult.Fail("密码不对。") : Open(key);
+        var secret = Secret();
+
+        if (_keys.MachineBound && secret is null)
+            return NoSecret("用密码打开");
+
+        var key = _keys.UnlockWithUserPassword(password, secret);
+
+        if (key is null)
+            return VaultResult.Fail("密码不对。");
+
+        // 老文件（只用密码派生的那道门）就地升级成绑定机器的 —— 内容一个字节都不动。
+        // 升级不了（拿不到本机秘密）也照样开，只是下次还得走这一趟。
+        if (!_keys.MachineBound && secret is not null)
+        {
+            try
+            {
+                _keys.BindToMachine(key, password, secret);
+                _keys.Save(VaultGuard.KeysPathFor(_configPath));
+            }
+            catch
+            {
+                // 升级失败不该让人打不开自己的东西。
+            }
+        }
+
+        return Open(key);
     }
 
     /// <summary>
@@ -210,7 +266,11 @@ public sealed class VaultSession : IDisposable
 
         try
         {
-            var keys = VaultKeys.ReWrap(_dataKey, newPassword, newGuardianCode);
+            var secret = Secret();
+            if (secret is null)
+                return NoSecret("重设密码");
+
+            var keys = VaultKeys.ReWrap(_dataKey, newPassword, newGuardianCode, secret);
             keys.Save(VaultGuard.KeysPathFor(_configPath));
 
             _keys = keys;
@@ -322,7 +382,11 @@ public sealed class VaultSession : IDisposable
 
         try
         {
-            _keys.SetUserPassword(_dataKey, newPassword);
+            var secret = Secret();
+            if (secret is null)
+                return NoSecret("改密码");
+
+            _keys.SetUserPassword(_dataKey, newPassword, secret);
             _keys.Save(VaultGuard.KeysPathFor(_configPath));
             return VaultResult.Success;
         }

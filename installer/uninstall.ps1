@@ -54,6 +54,36 @@ if (-not (Test-Path $vaultKeys)) {
     } | ConvertTo-Json
 
     [System.IO.File]::WriteAllText($seal, $record, (New-Object System.Text.UTF8Encoding $false))
+
+    # 两条一起做，才叫真的封印：
+    #
+    #   1. 把"密码那道门"从钥匙文件里删掉 —— 光写个标记不算，标记只是给本软件看的；
+    #      钥匙文件里那道门还在的话，谁把 vault 目录拷走、再写个小程序读它，密码照样能开。
+    #   2. 删掉"本机秘密"—— 那道门绑着它。这一步之后，**之前拷出去的 vault 副本也作废了**，
+    #      因为解开它还需要一份已经不存在的秘密。
+    #
+    # 字段名要和 Sentinel.Core 的 VaultKeys 对上。
+    try {
+        $keys = [System.IO.File]::ReadAllText($vaultKeys) | ConvertFrom-Json
+        $keys.WrappedByUser = $null
+        $keys.UserSalt = $null
+        $keys.State = 'SealedToGuardian'
+        $keys.SealedAt = (Get-Date).ToString('yyyy-MM-dd HH:mm:ss')
+        $keys.SealedReason = '保险箱：Sentinel 被卸载了'
+
+        $json = $keys | ConvertTo-Json -Depth 6
+        [System.IO.File]::WriteAllText($vaultKeys, $json, (New-Object System.Text.UTF8Encoding $false))
+        Write-Host '      已把密码那道门从钥匙文件里删掉'
+    } catch {
+        Write-Host "      （钥匙文件没能改写：$($_.Exception.Message)）"
+    }
+
+    $machineSecret = Join-Path $InstallDir '.vault-machine'
+    if (Test-Path $machineSecret) {
+        Remove-Item -Force $machineSecret
+        Write-Host '      已销毁本机秘密：此前拷出去的 vault 副本也打不开了'
+    }
+
     Write-Host '      已封印：你的密码不再能打开保险箱，只有监护码可以'
 }
 

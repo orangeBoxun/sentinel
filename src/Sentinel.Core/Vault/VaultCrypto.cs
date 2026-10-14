@@ -30,6 +30,27 @@ public static class VaultCrypto
     public static byte[] DeriveKey(string secret, byte[] salt, int iterations) =>
         Rfc2898DeriveBytes.Pbkdf2(secret, salt, iterations, HashAlgorithmName.SHA256, KeySize);
 
+    /// <summary>
+    /// 用户那道门的包装钥匙：**密码 + 这台机器上的一份秘密**，两样都要。
+    ///
+    /// <para>
+    /// 为什么不是只用密码：封印的原理是"把用户那道门从钥匙文件里删掉"，但**旧钥匙文件的副本里
+    /// 那道门还在** —— 谁在封印之前把 vault 目录拷一份出去（或者点一下界面的导出），谁就能把
+    /// 封印撤掉。给那道门再绑一份"只存在于这台机器、而封印/卸载时会销毁"的秘密之后，
+    /// 那份旧副本就不够用了：它还缺这份秘密。
+    /// </para>
+    /// <para>
+    /// 监护码那道门**不绑机器** —— 它存在的意义恰恰是"机器没了、重装了、被封了，还能回来"。
+    /// </para>
+    /// </summary>
+    public static byte[] DeriveBoundKey(string password, byte[] salt, int iterations, byte[] machineSecret) =>
+        HKDF.DeriveKey(
+            HashAlgorithmName.SHA256,
+            Rfc2898DeriveBytes.Pbkdf2(password, salt, iterations, HashAlgorithmName.SHA256, KeySize),
+            KeySize,
+            machineSecret,
+            Encoding.UTF8.GetBytes("sentinel-vault-user-door"));
+
     public static byte[] NewKey() => RandomNumberGenerator.GetBytes(KeySize);
 
     public static byte[] NewSalt() => RandomNumberGenerator.GetBytes(SaltSize);

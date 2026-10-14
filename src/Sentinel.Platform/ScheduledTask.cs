@@ -26,12 +26,49 @@ public static class ScheduledTask
     /// <summary>The task runs this executable with this switch, once a minute, as SYSTEM.</summary>
     public const string WatchdogArgument = "--watchdog";
 
+    /// <summary>
+    /// 任务在不在。
+    ///
+    /// <para>
+    /// 两条路都看：<c>schtasks /query</c>（SYSTEM 身份下最准），以及任务计划程序自己的定义文件
+    /// （<c>%SystemRoot%\System32\Tasks\&lt;名字&gt;</c>，普通权限也看得见它在不在）。
+    /// </para>
+    /// <para>
+    /// <b>拿不准时一律当作"在"。</b> 这个判据的另一头是"封印保险箱"，而封印不可逆 ——
+    /// 而 <c>schtasks</c> 在权限不够时同样返回失败，光看退出码就成了"看不懂 = 被拆了"。
+    /// 误封的代价我们已经付过一次了。
+    /// </para>
+    /// </summary>
     public static bool Exists(string taskName)
     {
+        if (File.Exists(DefinitionPath(taskName)))
+            return true;
+
         using var process = Start("schtasks.exe", ["/query", "/tn", taskName]);
         process.WaitForExit(10_000);
         return process.HasExited && process.ExitCode == 0;
     }
+
+    /// <summary>
+    /// 任务的 XML 定义。读不出来返回 null —— 普通权限下可能读不到（文件属于 SYSTEM），
+    /// 那不是"任务有问题"，只是"看不了"。
+    /// </summary>
+    public static string? ReadDefinition(string taskName)
+    {
+        try
+        {
+            var path = DefinitionPath(taskName);
+            return File.Exists(path) ? File.ReadAllText(path, Encoding.Unicode) : null;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    /// <summary>任务定义文件的位置。任务计划程序把每个任务存成一个 XML 放这儿。</summary>
+    public static string DefinitionPath(string taskName) =>
+        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.System), "Tasks", taskName);
 
     /// <summary>Creates or refreshes the watchdog task. Needs administrator rights.</summary>
     public static bool Ensure(string taskName, string executablePath, string arguments, out string? error)

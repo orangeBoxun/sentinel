@@ -293,6 +293,16 @@ public sealed class AgentState : IDisposable
         return true;
     }
 
+    /// <summary>
+    /// 保险箱要的那份"本机秘密"。包成一个委托，是因为窗口在别人手上构造 VaultSession ——
+    /// 让它按需来问服务，而不是把秘密在内存里传来传去。
+    ///
+    /// <para>
+    /// 拿不到不是错误：那意味着服务不在，而这时候密码那道门本来就打不开（只能拿监护码）。
+    /// </para>
+    /// </summary>
+    public byte[]? VaultSecret() => Service.TryGetVaultSecret(out var secret) ? secret : null;
+
     public IReadOnlyList<ConfigIssue> Validate() => ConfigValidator.Validate(Config);
 
     // ------------------------------------------------------------------ 暂停

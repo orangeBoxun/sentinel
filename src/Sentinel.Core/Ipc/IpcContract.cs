@@ -81,6 +81,11 @@ public static class Ipc
     /// </summary>
     public const string ReleaseProtection = "release-protection";
 
+    /// <summary>
+    /// 取"本机秘密"—— 保险箱的密码那道门绑着它（只有服务拿得到，见 VaultGuard）。
+    /// </summary>
+    public const string VaultSecret = "vault-secret";
+
     private static readonly JsonSerializerOptions Options = new()
     {
         Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping,

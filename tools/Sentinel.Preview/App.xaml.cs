@@ -86,6 +86,13 @@ public partial class App : Application
             return;
         }
 
+        // 本机秘密那条线：服务给得出来、给的是同一份、而且密码门真的绑住了它。
+        if (e.Args.Length >= 2 && e.Args[0] == "--vault-secret-check")
+        {
+            Shutdown(RunCheck(() => VaultSecretCheck.Run(e.Args[1])));
+            return;
+        }
+
         if (e.Args.Length >= 2 && e.Args[0] == "--watchdog-check")
         {
             Shutdown(RunCheck(() => WatchdogCheck.Run(e.Args[1])));
