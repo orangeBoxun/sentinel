@@ -408,6 +408,8 @@
                                 </Border></Grid>
 
                                 <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,16,0,8">
+                                <TextBlock x:Name="RuleStagedMark" Style="{StaticResource DirtyMark}" Foreground="{StaticResource Warning}"
+                                           Text="● 这条还没进配置 —— 点「应用修改」才会写下去" />
                                 <TextBlock x:Name="RuleDirtyMark" Style="{StaticResource DirtyMark}" Text="● 有未保存的修改" />
                                 <Button x:Name="ApplyRuleButton" Content="应用修改" Style="{StaticResource PrimaryIconButton}" Tag="{StaticResource IconCheck}" Click="ApplyRule_Click" />
                             </StackPanel>

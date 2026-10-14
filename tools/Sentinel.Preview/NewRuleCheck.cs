@@ -105,6 +105,7 @@ internal static class NewRuleCheck
             var patterns = (TextBox)window.FindName("RulePatternsBox")!;
             var name = (TextBox)window.FindName("RuleNameBox")!;
             var form = (FrameworkElement)window.FindName("RuleForm")!;
+            var stagedMark = (TextBlock)window.FindName("RuleStagedMark")!;
 
             var ok = true;
 
@@ -117,9 +118,17 @@ internal static class NewRuleCheck
             Console.WriteLine($"界面上：表单可用={form.IsEnabled}  名字框=「{name.Text}」  内容框=「{patterns.Text}」  列表选中={list.SelectedIndex}");
             Console.WriteLine($"这期间被拒过吗={refusals.Count > 0}");
 
-            Report(ref ok, "新建这条存下去了", onDisk.Count == 2, $"文件里 {onDisk.Count} 条规则");
-            Report(ref ok, "新建之后表单是活的、选中的就是它", form.IsEnabled && name.Text == "新规则",
+            Report(ref ok, "点新建**没有**写进配置（没填完的东西不该落盘）", onDisk.Count == 1,
+                $"文件里还是 {onDisk.Count} 条规则，多出来的那条只在界面上");
+            Report(ref ok, "但界面上列表里能看到它，表单是活的",
+                list.Items.Count == 2, $"界面上 {list.Items.Count} 条");
+            Report(ref ok, "选中的就是那条草稿", form.IsEnabled && name.Text == "新规则",
                 $"表单可用={form.IsEnabled} 名字=「{name.Text}」");
+
+            // 草稿在列表里和存好的规则长得一样 —— 不说一句，人会以为已经保存了。
+            Report(ref ok, "界面上明说这条还没进配置",
+                stagedMark.Visibility == Visibility.Visible,
+                stagedMark.Visibility == Visibility.Visible ? "说了" : "没说，看起来像已经存了");
 
             Console.WriteLine();
             Console.WriteLine("── 往「匹配内容」里打 http，点应用 ──");
@@ -141,25 +150,45 @@ internal static class NewRuleCheck
                 $"新规则的内容={string.Join("/", fresh?.Match.Patterns ?? new List<string>())}");
 
             Report(ref ok, "点应用之后没有被服务拒", refusals.Count == 0, $"被拒 {refusals.Count} 次");
+            Report(ref ok, "存下去之后那行提示消失了",
+                stagedMark.Visibility == Visibility.Collapsed,
+                stagedMark.Visibility == Visibility.Collapsed ? "消失了" : "还挂着");
 
-            // 再来一次：新建第二条、填内容、应用。用户就是这么连点两下的。
+            // ---- 用户真正踩的那个：新建之后把匹配方式改成「模型鉴定」再应用 ----
+            //
+            // 以前点新建会立刻把一条**关键词**规则写进配置，于是之后把它改成模型鉴定，
+            // 服务判成"同一条规则换了匹配方式 = 放宽"，要令牌。人只是想把这条规则填完，
+            // 什么都没想放宽。草稿不落盘之后，这一次就是"新增一条规则"：收紧，免费。
             Console.WriteLine();
-            Console.WriteLine("── 再新建一条，填内容，点应用 ──");
+            Console.WriteLine("── 再新建一条，匹配方式改成「模型鉴定」，填一句话，点应用 ──");
+
             newButton.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
             Pump();
-            patterns.Text = "http" + Environment.NewLine + "douyin";
+
+            var typeBox = (ComboBox)window.FindName("RuleTypeBox")!;
+            typeBox.SelectedItem = ((IEnumerable<Choice<MatchKind>>)typeBox.ItemsSource!)
+                .First(c => c.Value == MatchKind.Model);
             Pump();
+
+            patterns.Text = "和学习无关的娱乐内容";
+            Pump();
+
+            var refusalsBefore = refusals.Count;
+
             apply.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
             Pump();
 
             var third = OnDisk(configPath).Targets[0].Rules;
-            var newest = third.FirstOrDefault(r => r.Id == "rule-2");
-            Console.WriteLine($"文件里现在有 {third.Count} 条：{string.Join(" / ", third.Select(r => $"{r.Id}[{string.Join(",", r.Match.Patterns)}]"))}");
+            var modelRule = third.FirstOrDefault(r => r.Match.Type == MatchKind.Model);
+
+            Console.WriteLine($"文件里现在有 {third.Count} 条：{string.Join(" / ", third.Select(r => $"{r.Id}({r.Match.Type})[{string.Join(",", r.Match.Patterns)}]"))}");
             Console.WriteLine($"被拒过吗={(refusals.Count > 0 ? string.Join(" | ", refusals) : "没有")}");
 
-            Report(ref ok, "第二条也存对了",
-                newest is not null && newest.Match.Patterns.Count == 2,
-                $"rule-2 的内容={string.Join("/", newest?.Match.Patterns ?? new List<string>())}");
+            Report(ref ok, "把匹配方式改成「模型鉴定」也存得进去，没有被当成放宽",
+                modelRule is not null && refusals.Count == refusalsBefore,
+                modelRule is null
+                    ? "没进去"
+                    : $"进去了：{modelRule.Id}（{modelRule.Match.Type}）内容={string.Join("/", modelRule.Match.Patterns)}");
 
             // ---- 后台把配置整体换掉之后，界面还存得进去吗 ----
             //

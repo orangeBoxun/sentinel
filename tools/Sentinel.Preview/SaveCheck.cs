@@ -166,7 +166,7 @@ internal static class SaveCheck
             Match = new MatchSpec { Fields = { MatchField.Url } },
         });
 
-        Console.WriteLine("  「新建」会交上去的那份，校验结果：");
+        Console.WriteLine("  （历史记录）以前「新建」会立刻把这样一份交上去，校验结果是：");
         foreach (var issue in ConfigValidator.Validate(candidate))
             Console.WriteLine($"    {issue}");
         Console.WriteLine();
@@ -178,13 +178,19 @@ internal static class SaveCheck
 
         var after = RuleCount(state);
         var status = ((TextBlock)window.FindName("SaveStatusText")!).Text;
+        var rows = ((ListBox)window.FindName("RuleList")!).Items.Count;
 
         Console.WriteLine($"点「新建」之后");
-        Console.WriteLine($"  规则数   : {before} → {after}");
-        Console.WriteLine($"  状态栏   : {status}");
+        Console.WriteLine($"  文件里的规则数: {before} → {after}");
+        Console.WriteLine($"  界面上列表里  : {rows} 行");
+        Console.WriteLine($"  状态栏        : {status}");
 
-        ok &= after == before + 1;
-        ok &= status.Contains("已保存");
+        // 新建**不写配置**：造出来的是一条还没保存的草稿（只在界面上看得见）。
+        // 所以这里既不该多出一条，也不该出现"没有保存" —— 以前那条路会立刻提交一份空规则，
+        // 而配置里只要有 Error 就整次被拒，于是"点新建就报错"。
+        ok &= after == before;
+        ok &= rows == before + 1;
+        ok &= !status.Contains("没有保存");
 
         // ---- 二、改点别的也能存：换一条规则的启用开关
         window.SelectTab(2);

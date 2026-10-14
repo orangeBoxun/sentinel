@@ -230,6 +230,19 @@ public sealed class AgentState : IDisposable
     /// </summary>
     private bool Save(AppConfig candidate, string? token)
     {
+        // 新的一次编辑意味着**上一次被拒的改动翻篇了** —— 把它丢掉。
+        //
+        // 留着它的坏处是具体的：那份被拒的配置是**冻住的**，万一之后拿着令牌点「用令牌重试」，
+        // 发出去的就是它，会把这之后做的每一处改动一起盖回去 —— 用户看到的是"后面的配置改不了"。
+        // 而它本来要说的话只有一句"这次放宽了，值不值得去签一个令牌"，说过了就够了。
+        //
+        // 只丢"被拒的这次改动"，不动「关闭解锁保护」那个请求：那是从按钮上明确发起的另一个意图。
+        if (token is null)
+        {
+            PendingConfig = null;
+            PendingUnlockRequest = null;
+        }
+
         var saved = Service.TrySave(candidate, token, out var error, out var unlockRequest, out var reached);
 
         if (saved)

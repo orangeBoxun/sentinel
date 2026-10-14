@@ -317,7 +317,9 @@ public partial class MainWindow : Window
         var modelId = selection.Model;
 
         var target = _state.Config.Targets.FirstOrDefault(t => t.Id == selection.Target);
-        var rule = target?.Rules.FirstOrDefault(r => r.Id == ruleId);
+        var rule = _stagedRule is { } staged && staged.Id == ruleId
+            ? staged
+            : target?.Rules.FirstOrDefault(r => r.Id == ruleId);
         var policy = _state.Config.Policies.FirstOrDefault(p => p.Id == policyId);
         var schedule = _state.Config.Schedules.FirstOrDefault(s => s.Id == scheduleId);
         var model = _state.Config.Models.FirstOrDefault(m => m.Id == modelId);
@@ -350,7 +352,7 @@ public partial class MainWindow : Window
                 RefreshTargetList();
                 TargetList.SelectedItem = target;
 
-                RuleList.ItemsSource = target?.Rules;
+                RuleList.ItemsSource = RuleRows();
                 RuleList.SelectedItem = rule;
             }
 
@@ -719,9 +721,11 @@ public partial class MainWindow : Window
 
         // 规则在目标里面找：**跨目标按 Id 认会认错人** —— 这份配置里 codex 和 doubao
         // 各有一条都叫 rule 的规则。
-        _selectedRule = _selectedTarget is null
-            ? null
-            : Current(_selectedRule, _selectedTarget.Rules, r => r.Id);
+        _selectedRule = ReferenceEquals(_selectedRule, _stagedRule)
+            ? _stagedRule
+            : _selectedTarget is null
+                ? null
+                : Current(_selectedRule, _selectedTarget.Rules, r => r.Id);
 
         _selectedPolicy = Current(_selectedPolicy, _state.Config.Policies, p => p.Id);
         _selectedSchedule = Current(_selectedSchedule, _state.Config.Schedules, s => s.Id);
@@ -1287,6 +1291,61 @@ public partial class MainWindow : Window
 
     // ------------------------------------------------------------------ 规则
 
+    /// <summary>
+    /// 还没保存的那条新规则（点「新建」造出来的草稿）。
+    ///
+    /// <para>
+    /// 它<b>不在配置里</b> —— 这正是关键。以前点「新建」会立刻把一条空规则写进配置，于是用户在表单里
+    /// 把匹配方式从「关键词」改成「模型鉴定」再点应用时，服务拿它和已经存下来的那条空规则一比：
+    /// 同一条规则换了匹配方式，一律算放宽，于是要令牌 —— 而人只是想把这条规则填完，
+    /// 什么也没想放宽。空规则还会一直躺在配置文件里（"我东西都还没填，怎么就进去了"）。
+    /// </para>
+    /// <para>
+    /// 草稿只在<b>点「应用修改」</b>时才进配置 —— 和「大语言模型」那一页同一套做法。
+    /// </para>
+    /// </summary>
+    private Rule? _stagedRule;
+
+    /// <summary>规则列表该显示什么：配置里的规则 + 末尾那条还没保存的草稿。</summary>
+    private IReadOnlyList<Rule> RuleRows()
+    {
+        var rules = _selectedTarget?.Rules;
+
+        if (rules is null)
+            return _stagedRule is null ? Array.Empty<Rule>() : new[] { _stagedRule };
+
+        return _stagedRule is null ? rules : rules.Append(_stagedRule).ToList();
+    }
+
+    /// <summary>
+    /// 「这条还没进配置」那一行要不要显示。
+    ///
+    /// <para>
+    /// 草稿在列表里和存好的规则长得一模一样 —— 不说一句，人会以为已经保存了，
+    /// 那正是"我明明配了却没生效"的老毛病换个地方重演。
+    /// </para>
+    /// </summary>
+    private void RefreshStagedMark() =>
+        RuleStagedMark.Visibility = ReferenceEquals(_selectedRule, _stagedRule)
+            ? Visibility.Visible
+            : Visibility.Collapsed;
+
+    /// <summary>重绑规则列表，并把选中的那条认回来 —— 草稿也在列表里，所以它选得回来。</summary>
+    private void ShowRules()
+    {
+        var wanted = _selectedRule;
+        RefreshStagedMark();
+
+        Programmatic(() =>
+        {
+            RuleList.ItemsSource = null;
+            RuleList.ItemsSource = RuleRows();
+
+            if (wanted is not null && RuleRows().Contains(wanted))
+                RuleList.SelectedItem = wanted;
+        });
+    }
+
     private void RefreshRuleTargetPicker()
     {
         // **按 Id 认回来，不能按对象。** 保存被拒之后配置会被整体换成新读出来的对象，手里那个
@@ -1316,12 +1375,11 @@ public partial class MainWindow : Window
             return;
         }
 
+        // 换目标了，手里那条还没保存的草稿跟着走没有意义 —— 它属于上一个目标。
+        _stagedRule = null;
+
         _selectedTarget = RuleTargetPicker.SelectedItem as Target;
-        Programmatic(() =>
-        {
-            RuleList.ItemsSource = null;
-            RuleList.ItemsSource = _selectedTarget?.Rules;
-        });
+        ShowRules();
         RuleForm.IsEnabled = false;
         _selectedRule = null;
         _ruleForm.Clear();
@@ -1361,6 +1419,7 @@ public partial class MainWindow : Window
 
         _selectedRule = RuleList.SelectedItem as Rule;
         RuleForm.IsEnabled = _selectedRule is not null;
+        RefreshStagedMark();
 
         RefreshPauseStatus();
 
@@ -1436,20 +1495,13 @@ public partial class MainWindow : Window
             Match = new MatchSpec { Fields = { MatchField.Url } },
         };
 
-        _selectedTarget.Rules.Add(rule);
-        SaveAndReport();
-
-        // 保存**被拒**的时候，配置会被整体还原成存下来的那份，`_selectedTarget` 也就跟着清空了
-        // —— 这时候再往下读它就是一个空引用，一次没保存成功会连带把界面弄崩。
-        if (_selectedTarget is null)
-            return;
-
-        Programmatic(() =>
-        {
-            RuleList.ItemsSource = null;
-            RuleList.ItemsSource = _selectedTarget.Rules;
-            RuleList.SelectedItem = rule;
-        });
+        // **不保存。** 只在内存里造一条草稿，用户填完点「应用修改」才进配置 ——
+        // 空规则不该躺在配置文件里，也不该逼着人为了"把类型改成模型鉴定"去拿令牌。
+        _stagedRule = rule;
+        _selectedRule = rule;
+        ShowRules();
+        RuleForm.IsEnabled = true;
+        RefreshDirtyForms();
     }
 
     private void DeleteRule_Click(object sender, RoutedEventArgs e)
@@ -1464,6 +1516,17 @@ public partial class MainWindow : Window
             return;
         }
 
+        // 还没保存的草稿：丢掉就是丢掉。配置里没有它，所以这里不用保存，也谈不上"放宽"。
+        if (ReferenceEquals(_selectedRule, _stagedRule))
+        {
+            _stagedRule = null;
+            _selectedRule = null;
+            RuleForm.IsEnabled = false;
+            _ruleForm.Clear();
+            ShowRules();
+            return;
+        }
+
         _selectedTarget.Rules.Remove(_selectedRule);
         SaveAndReport();
         _selectedRule = null;
@@ -1474,11 +1537,7 @@ public partial class MainWindow : Window
         if (_selectedTarget is null)
             return;
 
-        Programmatic(() =>
-        {
-            RuleList.ItemsSource = null;
-            RuleList.ItemsSource = _selectedTarget.Rules;
-        });
+        ShowRules();
     }
 
     private void ApplyRule_Click(object sender, RoutedEventArgs e) => ApplyRuleForm();
@@ -1492,6 +1551,11 @@ public partial class MainWindow : Window
             SayNothingSelected("规则");
             return false;
         }
+
+        // 这是点「新建」造出来的草稿吗？如果是，这**一次**点应用就是它进配置的那一刻：
+        // 服务拿它和"里面还没有它"的那份比 —— 新增一条规则是收紧，不要令牌，
+        // 哪怕你在表单里把匹配方式改成了模型鉴定。
+        var isNew = ReferenceEquals(_selectedRule, _stagedRule);
 
         _selectedRule.Name = RuleNameBox.Text.Trim();
         _selectedRule.Enabled = RuleEnabledCheck.IsChecked == true;
@@ -1524,21 +1588,30 @@ public partial class MainWindow : Window
         _selectedRule.Pause.EveryDays = ParseInt(RulePauseDaysBox.Text, _selectedRule.Pause.EveryDays, 1, 365);
         _selectedRule.Pause.Minutes = ParseInt(RulePauseMinutesBox.Text, _selectedRule.Pause.Minutes, 1, 24 * 60);
 
+        if (isNew && _selectedTarget is not null && !_selectedTarget.Rules.Contains(_selectedRule))
+            _selectedTarget.Rules.Add(_selectedRule);
+
         var saved = SaveAndReport();
+
+        if (isNew)
+        {
+            if (saved)
+            {
+                _stagedRule = null;      // 进去了，不再是草稿
+            }
+            else
+            {
+                // 没存进去（比如被拒）：从配置里摘回去，仍旧当草稿拿着 ——
+                // 用户填的东西不能丢，也不能留在配置里。
+                _selectedTarget?.Rules.Remove(_selectedRule);
+            }
+        }
 
         // 重绑列表会先把选中项打到 -1（表单跟着清空），再选回来。整个过程是程序自己做的，
         // 所以不许把"要不要保存"勾出来 —— 那会在一次保存中途弹窗。
         //
         // 选回来的对象要先记下来：重绑那一下会把 _selectedRule 清成 null，之后再问就已经晚了。
-        var wanted = _selectedRule;
-        Programmatic(() =>
-        {
-            RuleList.ItemsSource = null;
-            RuleList.ItemsSource = _selectedTarget?.Rules;
-
-            if (wanted is not null && _selectedTarget?.Rules.Contains(wanted) == true)
-                RuleList.SelectedItem = wanted;
-        });
+        ShowRules();
 
         RefreshPauseStatus();
         ShowValidationResult();

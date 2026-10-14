@@ -81,6 +81,7 @@ internal static class RefuseCheck
             };
 
             var refused = false;
+            var refusalCount = 0;
             var refusalText = "";
 
             // 别让模态框把检查挂住；顺手把它的原话记下来 —— 拒绝时说不说得清"是哪一处放宽"，
@@ -88,6 +89,7 @@ internal static class RefuseCheck
             window.RefuseToUser = message =>
             {
                 refused = true;
+                refusalCount++;
                 refusalText = message;
             };
 
@@ -144,6 +146,39 @@ internal static class RefuseCheck
             Report(ref ok, "界面的内容也回到了配置里的值",
                 patterns.Text.Replace(Environment.NewLine, "/") == "old",
                 $"框里是「{patterns.Text.Replace(Environment.NewLine, "/")}」");
+
+            // ---- 被拒之后，后来的改动还改得动吗 ----
+            //
+            // 用户的说法是"别一直站着污染配置，害得后面的配置改不了"。那就要问清楚：
+            // 被拒的那份改动到底会不会留着，把后来的一次挡掉。
+            Console.WriteLine();
+            Console.WriteLine("── 被拒之后，再做一次别的改动 ──");
+            Console.WriteLine($"这会儿还挂着「等解锁」的改动吗={state.PendingUnlockRequest is not null}");
+
+            // 这次是纯加一条内容 = 收紧，和刚才被拒的那次无关，应该能存。
+            patterns.Text = "old" + Environment.NewLine + "http";
+            Pump();
+
+            apply.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
+            Pump();
+
+            var later = OnDisk(configPath).Targets[0].Rules[0];
+            Console.WriteLine($"磁盘上   : 优先级={later.Priority}  内容={string.Join("/", later.Match.Patterns)}");
+            Console.WriteLine($"界面上   : 优先级={priority.Text}  内容={patterns.Text.Replace(Environment.NewLine, "/")}");
+            Console.WriteLine($"到现在一共被拒 {refusalCount} 次");
+
+            Report(ref ok, "被拒的改动没有把后面这次挡住（纯加内容存下去了）",
+                later.Match.Patterns.Contains("http") && later.Priority == 0,
+                $"内容是 {string.Join("/", later.Match.Patterns)}，优先级 {later.Priority}");
+
+            Report(ref ok, "被拒的那份改动没有被顺手写进文件", later.Priority == 0,
+                $"优先级是 {later.Priority}（被拒那次要改成 99）");
+
+            // 用户的要求：被拒了提示一下就够了，别留着 —— 它一旦留着，之后拿令牌重试
+            // 会把冻住的那份旧配置发回去，把这之后的改动一起盖掉。
+            Report(ref ok, "被拒的那一次已经翻篇，不再挂着等解锁",
+                state.PendingUnlockRequest is null && state.PendingConfig is null,
+                state.PendingUnlockRequest is null ? "不挂了" : "还挂着，等着被重试");
 
             window.Close();
 
