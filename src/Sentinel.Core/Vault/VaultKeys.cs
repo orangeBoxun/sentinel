@@ -209,6 +209,21 @@ public sealed class VaultKeys
         return true;
     }
 
+    /// <summary>
+    /// 把状态收回"正常"：监护码进来之后解除封印用。
+    ///
+    /// <para>
+    /// 它本身不设任何门 —— 调用方必须**已经**用监护码打开了保险箱（<see cref="UnlockWithGuardianCode"/>
+    /// 是唯一的入口），否则这就是一个"把封印擦掉"的后门。
+    /// </para>
+    /// </summary>
+    public void ResetToNormal()
+    {
+        State = VaultState.Normal;
+        SealedAt = null;
+        SealedReason = null;
+    }
+
     /// <summary>True when the user's password is expected to work. Not part of the file.</summary>
     [JsonIgnore]
     public bool UserDoorAvailable => State == VaultState.Normal && WrappedByUser is not null;

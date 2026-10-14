@@ -27,7 +27,6 @@ public partial class VaultWindow : Window
 
     /// <summary>Generated but not yet confirmed by typing it back. Nothing is written until it matches.</summary>
     private string? _pendingGuardianCode;
-    private string? _pendingRecoveryCode;
     private string? _pendingNewGuardianCode;
 
     /// <summary>Set when the vault was opened with the guardian code, which is what prompts a reset.</summary>
@@ -141,7 +140,7 @@ public partial class VaultWindow : Window
             RefreshEntries();
 
             StatusText.Text = _recovering
-                ? "已用监护码打开。密码A 已经作废 —— 请在下面重新设置，否则下次只能用监护码。"
+                ? "已用监护码打开。设一个新密码就解除封印 —— 监护码保持现在这个。"
                 : "保险箱已打开。";
         }
         else if (_session.IsSealed)
@@ -326,44 +325,29 @@ public partial class VaultWindow : Window
 
     // ------------------------------------------------------------------ 重设
 
-    private void GenerateRecoveryCode_Click(object sender, RoutedEventArgs e)
+    /// <summary>
+    /// 用监护码进来之后：设一个新密码，封印就解除了。
+    ///
+    /// <para>
+    /// 这里**不**要求换监护码 —— 封印多半不是泄露引起的（误封、装机、断电），而监护码在别人
+    /// 手里，逼着换一次就是让人专程再跑一趟。想换，下面那个按钮随时可以换。
+    /// </para>
+    /// </summary>
+    private void SetPasswordAndUnseal_Click(object sender, RoutedEventArgs e)
     {
-        _pendingRecoveryCode = VaultCrypto.NewGuardianCode();
-        RecoveryCodeText.Text = _pendingRecoveryCode;
-        RecoveryConfirmBox.Text = "";
-        RecoveryConfirmPanel.Visibility = Visibility.Visible;
-        Fail(RecoveryError, null);
-    }
+        var result = _session.UnsealWithPassword(RecoverPassword.Password);
 
-    private void ConfirmRecovery_Click(object sender, RoutedEventArgs e)
-    {
-        if (_pendingRecoveryCode is null)
-        {
-            Fail(RecoveryError, "先生成一个新的监护码。");
-            return;
-        }
-
-        if (VaultCrypto.NormalizeGuardianCode(RecoveryConfirmBox.Text) is null)
-        {
-            Fail(RecoveryError, "敲进来的监护码和上面那串对不上。");
-            return;
-        }
-
-        var result = _session.ResetAfterRecovery(RecoverPassword.Password, RecoveryConfirmBox.Text);
         if (!result.Ok)
         {
             Fail(RecoveryError, result.Error);
             return;
         }
 
-        _pendingRecoveryCode = null;
         _recovering = false;
         RecoverPassword.Clear();
-        RecoveryConfirmBox.Clear();
-        RecoveryConfirmPanel.Visibility = Visibility.Collapsed;
 
         MessageBox.Show(this,
-            "已经重新设好。新的监护码请现在就交给监护人 —— 你手上这份用完就不作数了。",
+            "封印已解除，现在可以用这个密码打开保险箱了。监护码还是原来那个。",
             "保险箱", MessageBoxButton.OK, MessageBoxImage.Information);
 
         Refresh();

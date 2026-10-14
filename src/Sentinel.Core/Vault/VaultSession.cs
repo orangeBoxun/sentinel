@@ -249,31 +249,36 @@ public sealed class VaultSession : IDisposable
     }
 
     /// <summary>
-    /// After getting back in with the guardian code: a new password, and a new code to hand over.
-    /// The old guardian code is retired rather than reused — it has been typed into this machine,
-    /// and a fresh one costs nothing but another trip to the same person.
+    /// 用监护码进来之后：设一个新密码，**封印就此解除**，监护码保持现在这个。
+    ///
+    /// <para>
+    /// 以前这里必须同时换掉密码和监护码，理由是"监护码在这台机器上被敲过"。可封印绝大多数
+    /// 不是泄露引起的（误封、装机、断电都算），而监护码在别人手里 —— 强制换一次就是让人专程
+    /// 再跑一趟，换来的安全收益近乎为零。真想换，界面上本来就有换监护码的按钮。
+    /// </para>
+    /// <para>
+    /// 密码则<b>必须</b>重新设一个：封印把它那道门（包装）删掉了 —— 那不是策略，是信息没了，
+    /// 旧密码无从"恢复"，只能重新包一遍。你可以填回原来那个。
+    /// </para>
     /// </summary>
-    public VaultResult ResetAfterRecovery(string newPassword, string newGuardianCode)
+    public VaultResult UnsealWithPassword(string newPassword)
     {
-        if (Phase != VaultPhase.Unlocked || _dataKey is null)
+        if (Phase != VaultPhase.Unlocked || _dataKey is null || _keys is null)
             return VaultResult.Fail("先用监护码打开保险箱。");
 
         if (newPassword.Length < MinimumPasswordLength)
             return VaultResult.Fail($"密码至少 {MinimumPasswordLength} 位。");
 
-        if (VaultCrypto.NormalizeGuardianCode(newGuardianCode) is null)
-            return VaultResult.Fail("监护码格式不对。");
-
         try
         {
             var secret = Secret();
             if (secret is null)
-                return NoSecret("重设密码");
+                return NoSecret("设密码");
 
-            var keys = VaultKeys.ReWrap(_dataKey, newPassword, newGuardianCode, secret);
-            keys.Save(VaultGuard.KeysPathFor(_configPath));
+            _keys.SetUserPassword(_dataKey, newPassword, secret);
+            _keys.ResetToNormal();
+            _keys.Save(VaultGuard.KeysPathFor(_configPath));
 
-            _keys = keys;
             VaultGuard.ClearSeal(_configPath);
             SealReason = null;
             Guard = GuardStatus.Intact;
@@ -282,7 +287,7 @@ public sealed class VaultSession : IDisposable
         }
         catch (Exception ex)
         {
-            return VaultResult.Fail($"重新设置失败：{ex.Message}");
+            return VaultResult.Fail($"解除封印失败：{ex.Message}");
         }
     }
 
@@ -375,7 +380,9 @@ public sealed class VaultSession : IDisposable
             return VaultResult.Fail("先打开保险箱。");
 
         if (IsSealed)
-            return VaultResult.Fail("保险箱处于封印状态 —— 请用「重新设置」重建密码和监护码。");
+            return VaultResult.Fail(
+                "保险箱处于封印状态，改不了 —— 先用监护码打开，"
+                + "打开之后设一个新密码，封印就解除了（监护码保持现在这个）。");
 
         if (newPassword.Length < MinimumPasswordLength)
             return VaultResult.Fail($"密码至少 {MinimumPasswordLength} 位。");
@@ -411,7 +418,9 @@ public sealed class VaultSession : IDisposable
             return VaultResult.Fail("先打开保险箱。");
 
         if (IsSealed)
-            return VaultResult.Fail("保险箱处于封印状态 —— 请用「重新设置」重建密码和监护码。");
+            return VaultResult.Fail(
+                "保险箱处于封印状态，改不了 —— 先用监护码打开，"
+                + "打开之后设一个新密码，封印就解除了（监护码保持现在这个）。");
 
         if (_keys.UnlockWithGuardianCode(currentCode) is null)
             return VaultResult.Fail("当前的监护码不对。");

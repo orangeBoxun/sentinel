@@ -183,20 +183,13 @@
                 <Border x:Name="RecoveryBanner" Grid.Row="0" Background="{StaticResource WarningSurface}" BorderBrush="{StaticResource WarningBorder}" BorderThickness="1" CornerRadius="10" Padding="16" Margin="0,0,0,14" Visibility="Collapsed">
                     <StackPanel>
                         <TextBlock FontWeight="SemiBold" Foreground="{StaticResource Warning}" Text="你正在用监护码访问。" />
-                        <TextBlock Margin="0,7,0,0" TextWrapping="Wrap" LineHeight="21" Text="重新设一个密码A，以及一个新的监护码B（旧的那份交给监护人之后就别再用了）。" />
+                        <TextBlock Margin="0,7,0,0" TextWrapping="Wrap" LineHeight="21"
+                                   Text="设一个新密码就解除封印。监护码保持现在这个 —— 要换的话，下面有「换监护码」。（封印把密码那道门删掉了，所以密码得重新包一遍；你可以填回原来那个。）" />
 
                         <TextBlock Style="{StaticResource FieldLabel}" Margin="0,18,0,8" Text="新密码A" />
                         <PasswordBox x:Name="RecoverPassword" />
 
-                        <Button Content="生成新的监护码" HorizontalAlignment="Left" Margin="0,12,0,0" Click="GenerateRecoveryCode_Click" />
-
-                        <StackPanel x:Name="RecoveryConfirmPanel" Visibility="Collapsed">
-                            <TextBlock Style="{StaticResource H2}" Margin="0,16,0,0" Text="新的监护码B —— 抄给监护人" />
-                            <TextBox x:Name="RecoveryCodeText" IsReadOnly="True" Margin="0,10,0,0" FontFamily="{StaticResource MonoFont}" FontSize="16" Padding="12,10" Height="Auto" MinHeight="50" TextWrapping="Wrap" TextAlignment="Center" />
-                            <TextBlock Style="{StaticResource FieldLabel}" Margin="0,18,0,8" Text="再敲一遍确认" />
-                            <TextBox x:Name="RecoveryConfirmBox" FontFamily="{StaticResource MonoFont}" />
-                            <Button Content="确认重新设置" Style="{StaticResource PrimaryButton}" HorizontalAlignment="Left" Margin="0,12,0,0" Click="ConfirmRecovery_Click" />
-                        </StackPanel>
+                        <Button Content="设新密码并解除封印" Style="{StaticResource PrimaryButton}" HorizontalAlignment="Left" Margin="0,12,0,0" Click="SetPasswordAndUnseal_Click" />
 
                         <TextBlock x:Name="RecoveryError" Style="{StaticResource ErrorText}" Margin="0,12,0,0" />
                     </StackPanel>

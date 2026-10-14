@@ -431,10 +431,9 @@ public class VaultSessionTests : IDisposable
     }
 
     [Fact]
-    public void Recovering_with_the_guardian_code_sets_up_a_new_password()
+    public void Recovering_with_the_guardian_code_needs_only_a_new_password()
     {
         var code = VaultCrypto.NewGuardianCode();
-        var fresh = VaultCrypto.NewGuardianCode();
 
         using (var session = Session())
         {
@@ -447,14 +446,23 @@ public class VaultSessionTests : IDisposable
         using var recovered = Session();
         Assert.True(recovered.UnlockWithGuardianCode(code).Ok);
 
-        var reset = recovered.ResetAfterRecovery("换一个足够长的新密码", fresh);
-        Assert.True(reset.Ok, reset.Error);
+        // 只给一个密码。**监护码保持现在这个** —— 封印多半不是泄露引起的（误封、装机、断电），
+        // 逼着人专程去换一次监护码是纯摩擦；想换，界面上本来就有换监护码的按钮。
+        var unsealed = recovered.UnsealWithPassword("换一个足够长的新密码");
+
+        Assert.True(unsealed.Ok, unsealed.Error);
         Assert.False(recovered.IsSealed);
         Assert.Null(VaultGuard.ReadSeal(_config));
 
         recovered.Lock();
+
+        Assert.True(recovered.UnlockWithPassword("换一个足够长的新密码").Ok);   // 新密码能用
+        Assert.False(recovered.UnlockWithPassword("一个足够长的密码").Ok);     // 旧密码不行（门被删过，重包的是新的）
+
+        Assert.True(recovered.UnlockWithGuardianCode(code).Ok);              // ★ 同一个监护码照样能开
+
+        recovered.Lock();
         Assert.True(recovered.UnlockWithPassword("换一个足够长的新密码").Ok);
-        Assert.False(recovered.UnlockWithPassword("一个足够长的密码").Ok);
         Assert.Single(recovered.Entries);
     }
 
