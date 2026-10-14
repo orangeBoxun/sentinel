@@ -120,6 +120,11 @@ public sealed class ModelSupervisor : IModelSupervisor
     /// </summary>
     public string? BlockingIssue { get; private set; }
 
+    /// <summary>
+    /// 停摆是哪一类 —— 界面靠它决定"多勤地提醒"。见 <see cref="ModelTroubleKind"/>。
+    /// </summary>
+    public ModelTroubleKind BlockingKind { get; private set; }
+
     /// <summary>最近一次成功判定的时间。用来判断"通了没有"。</summary>
     public DateTimeOffset? LastAnswered { get; private set; }
 
@@ -218,7 +223,10 @@ public sealed class ModelSupervisor : IModelSupervisor
 
             if (_lastAttempt.TryGetValue(key, out var last))
             {
-                var wait = BlockingIssue is null ? RetryAfterNoAnswer : RetryAfterAttention;
+                // 本地服务没起来那种，退避要短：它最好办（拉起来就行），早点试通早点恢复。
+                var wait = BlockingKind == ModelTroubleKind.LocalUnreachable
+                    ? RetryAfterNoAnswer
+                    : BlockingIssue is null ? RetryAfterNoAnswer : RetryAfterAttention;
                 if (now - last < wait)
                     return;
             }
@@ -251,6 +259,7 @@ public sealed class ModelSupervisor : IModelSupervisor
             {
                 case ModelCallOutcome.Answered:
                     BlockingIssue = null;
+                    BlockingKind = ModelTroubleKind.None;
                     LastAnswered = DateTimeOffset.Now;
                     Store(key, ruleId, snapshot.Url, result.Violates
                         ? new ModelVerdict(ModelVerdictKind.Blocked, result.Reason)
@@ -259,6 +268,14 @@ public sealed class ModelSupervisor : IModelSupervisor
 
                 case ModelCallOutcome.NeedsAttention:
                     BlockingIssue = result.Message;
+                    BlockingKind = ModelTroubleKind.NeedsAttention;
+                    break;
+
+                case ModelCallOutcome.Unreachable:
+                    // 连不上 —— 但**要不要吵取决于那是谁的服务**：本机/内网的没起来
+                    // 是要吵的（网站照样打得开，只是没人判了），公网的按"没网"处理，不吵。
+                    BlockingKind = ModelTrouble.Classify(result.Outcome, provider.Endpoint);
+                    BlockingIssue = BlockingKind == ModelTroubleKind.None ? null : result.Message;
                     break;
 
                 case ModelCallOutcome.NoAnswer:

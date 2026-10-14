@@ -353,7 +353,8 @@ public class ModelTests
 
         var result = await client.JudgeAsync(Provider(ApiFormat.OpenAi), "x", Snapshot(), default);
 
-        Assert.Equal(ModelCallOutcome.NoAnswer, result.Outcome);
+        // 归"连不上"这一类（不是"没网"）：要不要为它吵，还要看那地址是不是你自己的服务。
+        Assert.Equal(ModelCallOutcome.Unreachable, result.Outcome);
         Assert.Contains("SSL", result.Message);
 
         // 只重试一次：反复重试会把"慢"变成"卡"。

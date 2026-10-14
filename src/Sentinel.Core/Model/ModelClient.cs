@@ -13,12 +13,23 @@ public enum ModelCallOutcome
     Answered,
 
     /// <summary>
-    /// 没拿到：没网、超时、服务端 5xx、或者回来的东西看不懂。
+    /// 没拿到：服务端 5xx、或者回来的东西看不懂。
     ///
-    /// <b>这一类不管。</b>没网的时候那些娱乐网站自己也打不开 —— 拦不拦没有区别，
-    /// 而为一件不会发生的事弹全屏提醒，只会让人把这个功能关掉。
+    /// <b>这一类不管。</b>多半是自己会好的事，等退避过去再试。真正的"连不上"另算
+    /// （见 <see cref="Unreachable"/>）。
     /// </summary>
     NoAnswer,
+
+    /// <summary>
+    /// 压根没连上：DNS 失败、连接被拒、TLS 握手失败、超时。
+    ///
+    /// <para>
+    /// 单独分出来，是因为"要不要吵"取决于**那是谁的服务**：公网的连不上按"没网"处理（不管），
+    /// 而本机/内网的连不上意味着"你自己的东西没起来" —— 网站照样打得开、你照样能刷，
+    /// 只是没人判了。那种要吵。判断在 <see cref="ModelTrouble"/> 里。
+    /// </para>
+    /// </summary>
+    Unreachable,
 
     /// <summary>
     /// 要你去处理：钥匙不对（401/403）、欠费（402）、超额限流（429）。
@@ -107,11 +118,12 @@ public sealed class ModelClient
         }
         catch (Exception ex)
         {
-            // 连不上、DNS 失败、超时、TLS 握手失败 —— 都属于"没网"那一类。
+            // 连不上、DNS 失败、超时、TLS 握手失败 —— 归"连不上"这一类（不是"没网"：
+            // 是不是没网要看得更远一点，见 ModelTrouble）。
             //
-            // 但原因要带出去：配服务商的时候，"连不上"三个字帮不上任何忙，而
+            // 原因要带出去：配服务商的时候，"连不上"三个字帮不上任何忙，而
             // "No such host is known" 和 "timed out" 是两件完全不同的事。
-            return new ModelCallResult(ModelCallOutcome.NoAnswer, Message: Describe(ex));
+            return new ModelCallResult(ModelCallOutcome.Unreachable, Message: Describe(ex));
         }
 
         using (response)

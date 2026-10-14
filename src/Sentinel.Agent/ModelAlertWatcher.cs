@@ -1,4 +1,5 @@
 ﻿using System.Windows.Threading;
+using Sentinel.Core.Model;
 using Sentinel.Core.Models;
 
 namespace Sentinel.Agent;
@@ -18,8 +19,18 @@ namespace Sentinel.Agent;
 /// </summary>
 internal sealed class ModelAlertWatcher : IDisposable
 {
-    /// <summary>用户点名要的节奏。</summary>
+    /// <summary>要你去处理那类（钥匙、欠费）的节奏：外面的事，五分钟提一次够了。</summary>
     private static readonly TimeSpan RepeatEvery = TimeSpan.FromMinutes(5);
+
+    /// <summary>
+    /// 本地服务没起来那类：**30 秒一次**。
+    ///
+    /// <para>
+    /// 它和上面那类不一样：这是你自己的东西，拉起来就好（一条命令的事），而这期间
+    /// 你照样能刷 —— 模型规则等于不存在，且没有任何别的迹象。所以要催得勤。
+    /// </para>
+    /// </summary>
+    private static readonly TimeSpan LocalRepeatEvery = TimeSpan.FromSeconds(30);
 
     /// <summary>多久看一眼状态。问题什么时候出现是不可预知的，所以查得比提醒本身勤。</summary>
     private static readonly TimeSpan PollEvery = TimeSpan.FromSeconds(30);
@@ -42,7 +53,8 @@ internal sealed class ModelAlertWatcher : IDisposable
 
     private void Check()
     {
-        var issue = _state.Monitor.ModelSupervisor?.BlockingIssue;
+        var supervisor = _state.Monitor.ModelSupervisor;
+        var issue = supervisor?.BlockingIssue;
 
         if (issue is null)
         {
@@ -51,16 +63,23 @@ internal sealed class ModelAlertWatcher : IDisposable
             return;
         }
 
-        if (DateTimeOffset.Now - _lastShown < RepeatEvery)
+        var local = supervisor!.BlockingKind == ModelTroubleKind.LocalUnreachable;
+        var repeat = local ? LocalRepeatEvery : RepeatEvery;
+
+        if (DateTimeOffset.Now - _lastShown < repeat)
             return;
 
         _lastShown = DateTimeOffset.Now;
 
         _tray.ShowAlert(
-            "Sentinel · 模型监督停了",
-            $"{issue}\n\n"
-            + "在修好之前，「模型监督」的规则不会生效 —— 它们现在等于不存在。\n"
-            + "去「大语言模型」页充值或者换一个服务商；不想用了就把「启用」取消掉（那算放宽，需要令牌）。",
+            local ? "Sentinel · 本地模型没起来" : "Sentinel · 模型监督停了",
+            local
+                ? $"{issue}\n\n"
+                  + "这是你自己机器上（或内网）的服务，拉起来就行 —— 比如把 Ollama 启动起来。\n"
+                  + "在你拉起它之前，网站照样打得开，但「模型监督」的规则等于不存在 —— 没人判了。"
+                : $"{issue}\n\n"
+                  + "在修好之前，「模型监督」的规则不会生效 —— 它们现在等于不存在。\n"
+                  + "去「大语言模型」页充值或者换一个服务商；不想用了就把「启用」取消掉（那算放宽，需要令牌）。",
             acted: true,
             AlertStyle.Fullscreen);
     }
