@@ -2846,7 +2846,8 @@ public partial class MainWindow : Window
 
         if (!target.Reader.ScanBody)
             report.Add("   ⚠ 这个目标没读「正文」—— 模型只拿得到网址和标题。"
-                       + "想让它看页面内容，去「目标」页勾上「正文」。");
+                       + "（**规则里勾的字段是「拿什么来判断」，目标页的「读取正文」是「去不去读」，"
+                       + "两个都要有。**）想让它看页面内容，去「目标」页勾上「读取正文」再测一次。");
 
         // ---- 3. 规则
         var rules = target.Rules.Where(r => r.Enabled && r.Match.Type == MatchKind.Model).ToList();
@@ -2944,12 +2945,25 @@ public partial class MainWindow : Window
         }
         else if (_state.Monitor.ModelSupervisor is { } supervisor)
         {
-            var held = supervisor.Lookup(rule.Id, snapshot);
-            report.Add($"5. 监控现在对这份内容的判定：{DescribeVerdict(held)}");
+            // 第 5 步说的是**监控手上那条**，不是刚才问出来的那条 —— 它可能是另一个时刻、
+            // 甚至另一份内容的判定（同一个地址 60 秒内不重问）。所以要把它是哪儿来的说清楚，
+            // 否则"测试说不违规、监控说违规"看起来就像这套东西在乱判。
+            var held = supervisor.Explain(rule.Id, snapshot);
 
-            if (result.Outcome == ModelCallOutcome.Answered && result.Violates && !held.IsBlocked)
-                report.Add("   （判定是异步的：这一问的结果要等下一轮才被监控用上，几秒的事。"
-                           + "如果一直是这样，那就是这条链有问题，告诉我。）");
+            report.Add($"5. 监控现在记着的判定：{DescribeVerdict(held.Verdict)}"
+                       + $"（{held.How}"
+                       + (held.Age is { } age ? $"，那是 {age.TotalSeconds:0} 秒前的事" : "")
+                       + "）");
+
+            if (result.Outcome == ModelCallOutcome.Answered
+                && held.Verdict.Kind != ModelVerdictKind.Unknown
+                && result.Violates != held.Verdict.IsBlocked)
+            {
+                report.Add("   ⚠ 这一次问的结论，和监控手上那条不一样。两件事凑在一起：监控是"
+                           + "**异步**判的（上一轮问的，这一轮才用上），而且**同一个地址 60 秒内"
+                           + "不重复问** —— 上面那条可能是几秒前、乃至另一个时刻留下的判定。"
+                           + "两三次都这样再看我。");
+            }
 
             if (supervisor.BlockingIssue is { } issue)
                 report.Add($"   监控那边报的问题：{issue}");

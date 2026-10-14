@@ -21,6 +21,12 @@ public sealed record ModelVerdict(ModelVerdictKind Kind, string? Reason)
     public bool IsBlocked => Kind == ModelVerdictKind.Blocked;
 }
 
+/// <summary>
+/// 这条判定是从哪儿来的。<paramref name="How"/> 是一句给人看的话，<paramref name="Age"/> 是
+/// "多久以前判的"（能算出来才有）。
+/// </summary>
+public sealed record VerdictProvenance(ModelVerdict Verdict, string How, TimeSpan? Age);
+
 /// <summary>规则引擎看模型判定的那一面。同步查，异步判。</summary>
 public interface IModelSupervisor
 {
@@ -144,6 +150,41 @@ public sealed class ModelSupervisor : IModelSupervisor
                 return recent;
 
             return ModelVerdict.Unknown;
+        }
+    }
+
+    /// <summary>
+    /// 这条判定是从哪儿来的 —— 给「诊断」页用的。
+    ///
+    /// <para>
+    /// 监控是<b>异步</b>判的，而且会缓存：同一份内容不重问，<b>同一个地址 60 秒内也沿用上一次的
+    /// 结论</b>（正文在动而已）。于是诊断里会出现"模型这次说不违规、监控手上却是违规" ——
+    /// 那不是链断了，是两件事凑在一起：模型对同一个问题的两次回答可以不一样，而监控手上那条是
+    /// 另一个时刻留下的。说不清这一点，人只会觉得这套东西在乱判。
+    /// </para>
+    /// </summary>
+    public VerdictProvenance Explain(string ruleId, ContentSnapshot snapshot)
+    {
+        var now = DateTimeOffset.Now;
+
+        lock (_gate)
+        {
+            if (_verdicts.TryGetValue(Key(ruleId, ContentFingerprint.Of(snapshot)), out var known))
+                return new VerdictProvenance(known, "这份内容判过，直接沿用（没有再问一次）", null);
+
+            var url = snapshot.Url;
+
+            if (!string.IsNullOrEmpty(url)
+                && _byAddress.TryGetValue(AddressKey(ruleId, url), out var recent)
+                && now - recent.At <= VerdictLifetime)
+            {
+                return new VerdictProvenance(
+                    recent.Verdict,
+                    "同一个地址上一次的结论还没过期，沿用了它 —— **内容可能已经变了**",
+                    now - recent.At);
+            }
+
+            return new VerdictProvenance(ModelVerdict.Unknown, "还没判过（下一轮会问）", null);
         }
     }
 
