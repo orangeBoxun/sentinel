@@ -2352,8 +2352,21 @@ public partial class MainWindow : Window
         if (ModelFormatBox.SelectedItem is Choice<ApiFormat> format)
             _selectedModel.Format = format.Value;
 
-        // 启用是"唯一"的：勾上它就等于把别的都取消启用。
-        _state.Config.ActiveModelId = ModelActiveCheck.IsChecked == true ? _selectedModel.Id : null;
+        // 勾上它 = 启用这个服务商（启用是唯一的，等于把别的都取消启用）。
+        //
+        // **但不能反过来说：没勾 ≠ 关掉模型监督。** 这里原来写的是"没勾就把 ActiveModelId
+        // 清空"，而新建的服务商默认就是不勾的 —— 于是"添加一条管道"这个动作被记成了
+        // "关掉了模型监督"，判定器一看"从开到关"就是放宽，于是要令牌。人只是在加管道，
+        // 什么都没想放宽。
+        if (ModelActiveCheck.IsChecked == true)
+        {
+            _state.Config.ActiveModelId = _selectedModel.Id;
+        }
+        else if (_selectedModel.Id == _state.Config.ActiveModelId)
+        {
+            // 取消勾选的正是当前启用的那一个 —— 这才真叫"关掉模型监督"，要令牌是应该的。
+            _state.Config.ActiveModelId = null;
+        }
 
         if (isNew)
             _state.Config.Models.Add(_selectedModel);

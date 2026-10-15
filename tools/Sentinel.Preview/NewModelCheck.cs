@@ -61,6 +61,8 @@ internal static class NewModelCheck
         addButton.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
         Pump();
 
+        var activeBefore = state.Config.ActiveModelId;
+
         var endpointBox = (TextBox)window.FindName("ModelEndpointBox")!;
         var formatBox = (ComboBox)window.FindName("ModelFormatBox")!;
         var modelBox = (ComboBox)window.FindName("ModelCodePicker")!;
@@ -112,6 +114,12 @@ internal static class NewModelCheck
 
         applyButton.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
         Pump();
+
+        // 添加服务商**不许动"当前启用的是谁"** —— 新建的那个默认不勾，而"没勾"不是
+        // "关掉模型监督"。以前这里会把 ActiveModelId 清空，于是"加一条管道"被判成放宽、
+        // 要令牌（用户就是这么卡住的）。
+        Console.WriteLine($"添加之后，当前启用的服务商: 「{state.Config.ActiveModelId}」（原来「{activeBefore}」）");
+        ok &= state.Config.ActiveModelId == activeBefore;
 
         var countAfterApply = state.Config.Models.Count;
         Console.WriteLine($"点过「应用修改」: 配置里现在有 {countAfterApply} 个服务商（新条目{(countAfterApply == initialCount + 1 ? "加进去了" : "没加进去")}）");
