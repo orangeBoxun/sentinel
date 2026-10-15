@@ -2166,11 +2166,12 @@ public partial class MainWindow : Window
             return;
 
         // 人明确关掉了补全 —— **原样使用，一个字符都不动**。
+        //
+        // 这里以前还有一条"末尾是斜杠就跳过"的猜测（把斜杠当成"我写完了"）—— 撤了：
+        // 那是个没有提示、也没有任何人知道的暗号，而用户粘贴过来的地址常常自带一个尾巴斜杠
+        // （…/api/paas/v4/），于是他勾着"自动补全"却什么也没发生，只能自己手动补。
+        // "别动我写的"现在有一个看得见的说法：把下面那个开关取消勾选。
         if (ModelAutoCompleteCheck.IsChecked != true)
-            return;
-
-        // 末尾是斜杠 = 人明确表示"写完了，别动它"。
-        if (url.EndsWith('/'))
             return;
 
         // 规则只有一份，在 ModelClient.CompleteEndpoint 里（测试连接失败时也用同一条规则）。

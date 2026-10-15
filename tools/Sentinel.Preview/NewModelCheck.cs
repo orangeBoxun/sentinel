@@ -92,6 +92,15 @@ internal static class NewModelCheck
         Console.WriteLine($"带版本段的「…/api/paas/v4」补全成: 「{endpointBox.Text}」");
         ok &= endpointBox.Text == "https://open.bigmodel.cn/api/paas/v4/chat/completions";
 
+        // **末尾带斜杠也要补。** 以前这里有一条"斜杠 = 我写完了"的暗号会跳过补全，而粘贴过来的
+        // 地址常常自带尾巴斜杠 —— 于是勾着"自动补全"却什么都不发生。
+        endpointBox.Text = "https://open.bigmodel.cn/api/paas/v4/";
+        endpointBox.RaiseEvent(new RoutedEventArgs(UIElement.LostFocusEvent));
+        Pump();
+
+        Console.WriteLine($"带尾巴斜杠的「…/api/paas/v4/」补全成: 「{endpointBox.Text}」");
+        ok &= endpointBox.Text == "https://open.bigmodel.cn/api/paas/v4/chat/completions";
+
         // 关掉自动补全：**原样使用，一个字符都不动** —— 有些服务商的路径就是不长标准那样，
         // 补错了比不补更气人（智谱那种地址就是这么被补错的）。
         var autoComplete = (CheckBox)window.FindName("ModelAutoCompleteCheck")!;
