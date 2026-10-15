@@ -90,7 +90,7 @@ public sealed class ModelClient
     };
 
     /// <summary>
-    /// 共用一个 HttpClient。超时给到 <b>3 分钟</b>。
+    /// 共用一个 HttpClient。超时 <b>60 秒</b>。
     ///
     /// <para>
     /// 共用的理由：以前每个 ModelClient 自己 new 一个，而 ModelClient 被监督器持有、监督器又随着
@@ -99,13 +99,12 @@ public sealed class ModelClient
     /// "连不上"，弹"本地模型没起来"，而模型一直好好的。
     /// </para>
     /// <para>
-    /// 超时给长的理由：**慢不等于算不出来**。本机跑 7B 判一整页实测要两分钟左右，卡在 60 秒
-    /// 上等于把能用的判定白白扔掉，而那几条规则就真的等于不存在了。宁可等三分钟拿一个判定
-    /// （判定是按内容指纹缓存的，页面没变就一直有效），也不要在六十秒上放弃 —— 真等不到，
-    /// 提醒会说清"太慢，换模型或换服务商"（见 <see cref="ModelTrouble"/>）。
+    /// 超时为什么是 60 秒：<b>判定晚到等于没有判定</b>。一分钟还没回来的话，人早翻过去看别的了，
+    /// 而每页都这么挂着，机器会被拖住（本机跑大模型尤其明显）。所以一分钟就是上限，
+    /// 到点就归"太慢"这一类：停发新请求，反复提醒换模型 —— 见 <see cref="ModelTrouble"/>。
     /// </para>
     /// </summary>
-    private static readonly HttpClient SharedHttp = new() { Timeout = TimeSpan.FromSeconds(180) };
+    private static readonly HttpClient SharedHttp = new() { Timeout = TimeSpan.FromSeconds(60) };
 
     public ModelClient(HttpClient? http = null)
     {
@@ -152,7 +151,7 @@ public sealed class ModelClient
             if (LooksLikeTimeout(ex))
             {
                 return new ModelCallResult(ModelCallOutcome.Timeout,
-                    Message: $"等了 {_http.Timeout.TotalMinutes:0} 分钟也没答上来 —— 模型太慢，或者卡住了。"
+                    Message: $"等了 {_http.Timeout.TotalSeconds:0} 秒也没答上来 —— 判定晚到等于没有判定。"
                              + "换一个小一点的模型，或者换一个服务商（本机跑大模型最容易这样）。"
                              + "也可以先把「目标」页的「读取正文」关掉，少喂点内容给它。");
             }

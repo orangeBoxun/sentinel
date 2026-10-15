@@ -45,6 +45,20 @@ internal sealed class ModelAlertWatcher : IDisposable
     /// <summary>探测进行中就不重复发 —— 一次请求的时间可能比定时器间隔还长。</summary>
     private bool _probing;
 
+    /// <summary>上一次探测的时刻。</summary>
+    private DateTimeOffset _lastProbed = DateTimeOffset.MinValue;
+
+    /// <summary>
+    /// 「太慢」那类的探测间隔：**90 秒**。
+    ///
+    /// <para>
+    /// 比提醒的 30 秒稀，因为探测本身要花模型的时间（在慢模型上一次就是几十秒）——
+    /// 提醒是免费的，探测不是。90 秒足够在"换了模型"之后两分钟内自动恢复，
+    /// 又不至于让探测自己把机器拖住。
+    /// </para>
+    /// </summary>
+    private static readonly TimeSpan SlowProbeEvery = TimeSpan.FromSeconds(90);
+
     public ModelAlertWatcher(AgentState state, TrayIcon tray)
     {
         _state = state;
@@ -64,21 +78,28 @@ internal sealed class ModelAlertWatcher : IDisposable
         {
             // 修好了。下次再出问题要立刻提醒，而不是接着上一次的计时。
             _lastShown = DateTimeOffset.MinValue;
+            _lastProbed = DateTimeOffset.MinValue;
             return;
         }
 
         // **响之前先真问一次。** 那条停摆状态可能是陈旧的：它只在拿到判定时才被清掉，而判定要有人
         // 打开命中规则的页面才发起 —— 于是"昨晚模型没起来"留下的状态会一直挂着，提醒一直响，
         // 而它早就好了。探测通了就清掉状态、这次也不响。
-        if (!_probing)
+        var probeEvery = supervisor!.BlockingKind == ModelTroubleKind.TooSlow
+            ? SlowProbeEvery
+            : PollEvery;   // 连不上那类：探测是瞬时失败，随便探
+
+        if (!_probing && DateTimeOffset.Now - _lastProbed >= probeEvery)
         {
+            _lastProbed = DateTimeOffset.Now;
             _probing = true;
 
             try
             {
-                if (await supervisor!.ProbeAsync())
+                if (await supervisor.ProbeAsync())
                 {
                     _lastShown = DateTimeOffset.MinValue;
+                    _lastProbed = DateTimeOffset.MinValue;
                     return;
                 }
             }
@@ -87,7 +108,7 @@ internal sealed class ModelAlertWatcher : IDisposable
                 _probing = false;
             }
 
-            issue = supervisor!.BlockingIssue;
+            issue = supervisor.BlockingIssue;
 
             if (issue is null)
             {

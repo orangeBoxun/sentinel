@@ -252,11 +252,29 @@ public sealed class ModelSupervisor : IModelSupervisor
     /// <summary>探测用的那句话：越短越好，它唯一的任务是"走通一次"。</summary>
     private const string ProbeInstruction = "这是一次连通性探测。照常回答即可。";
 
+    /// <summary>
+    /// 探测用的一份内容 —— **和真实页面一样大**。
+    ///
+    /// <para>
+    /// 关键在这里：探测如果只发一句"在吗"，慢模型也会秒回，于是刚记下的"太慢"立刻被自己抹掉，
+    /// 提醒一阵一阵的，人根本不知道该干什么。带上四千字的正文，探测才和真实判定同量级 ——
+    /// 慢模型照样过不了，换快了才通得过。
+    /// </para>
+    /// </summary>
     private static ContentSnapshot ProbeSnapshot() =>
-        new("(探测)", "(探测)", null, DateTimeOffset.Now);
+        new("(探测)", "(探测)", string.Concat(Enumerable.Repeat("这是一段用来测量判定耗时的正文。", 300)),
+            DateTimeOffset.Now);
 
     public void Request(string ruleId, string instruction, ContentSnapshot snapshot)
     {
+        // **已经知道它坏了（没起来、或者慢到拿不到判定）就不再发新的判定请求。**
+        //
+        // 对着一个慢模型，每页都发一次等于让这台机器一直满负荷转，而判定要一分钟以上才回来、
+        // 回来也早没用了。这时候该做的是反复提醒人去换模型，不是接着烧机器。
+        // 恢复靠探测（见 ProbeAsync）：它每分钟问一次"现在通不通、够不够快"。
+        if (BlockingKind != ModelTroubleKind.None)
+            return;
+
         var fingerprint = ContentFingerprint.Of(snapshot);
         var key = Key(ruleId, fingerprint);
         var now = DateTimeOffset.Now;

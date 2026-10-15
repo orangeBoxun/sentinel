@@ -309,6 +309,45 @@ public class ModelTests
         Assert.Equal(ModelTroubleKind.None, supervisor.BlockingKind);
     }
 
+    [Fact]
+    public async Task While_the_model_is_broken_no_more_judgements_are_sent()
+    {
+        // 已经知道它坏了（没起来、或者慢到拿不到判定）就不再发新请求 —— 对着一个慢模型，
+        // 每页都发一次等于让这台机器一直满负荷转，而判定回来也早没用了。
+        // 恢复靠探测（ProbeAsync），不靠多试几次说不定就通了。
+        var provider = Provider(ApiFormat.OpenAi);
+        provider.Endpoint = "http://127.0.0.1:11434/v1/chat/completions";
+
+        var config = new AppConfig();
+        config.Models.Add(provider);
+        config.ActiveModelId = provider.Id;
+
+        var handler = new SwitchHandler { Fail = true };
+        var supervisor = new ModelSupervisor(
+            () => config,
+            new ModelClient(new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(10) }));
+
+        supervisor.Request("r", "禁令", Snapshot());
+        await WaitUntil(() => supervisor.BlockingIssue is not null);
+
+        var afterFirst = handler.Attempts;
+
+        // 又来了两个不同的页面
+        supervisor.Request("r", "禁令", Snapshot("https://example.com/two"));
+        supervisor.Request("r", "禁令", Snapshot("https://example.com/three"));
+        await Task.Delay(300);
+
+        Assert.Equal(afterFirst, handler.Attempts);
+
+        // 换好之后：探测会放行，判定重新开始发
+        handler.Fail = false;
+        Assert.True(await supervisor.ProbeAsync());
+        Assert.Null(supervisor.BlockingIssue);
+
+        supervisor.Request("r", "禁令", Snapshot("https://example.com/four"));
+        await WaitUntil(() => handler.Attempts > afterFirst);
+    }
+
     private static async Task WaitUntil(Func<bool> condition)
     {
         for (var i = 0; i < 60 && !condition(); i++)
@@ -333,9 +372,13 @@ public class ModelTests
     {
         public bool Fail { get; set; }
 
+        public int Attempts { get; private set; }
+
         protected override Task<HttpResponseMessage> SendAsync(
             HttpRequestMessage request, CancellationToken cancellationToken)
         {
+            Attempts++;
+
             if (Fail)
                 throw new HttpRequestException("目标计算机积极拒绝，无法连接。");
 
