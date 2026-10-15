@@ -224,6 +224,19 @@ public sealed class ModelProvider
     /// 光看请求地址（<c>https://api.deepseek.com/anthropic</c>）推不出列表在哪。推不出来就让人填。
     /// </para>
     /// </summary>
+    /// <summary>
+    /// 失焦时要不要按上游格式自动补全请求地址。
+    ///
+    /// <para>
+    /// 默认开 —— 配服务商时最常见的错就是"地址只写了一半"（base 后面那段路径没加，于是 404）。
+    /// 但**有些服务商的路径不长标准那样** ✗：比如智谱的
+    /// <c>https://open.bigmodel.cn/api/paas/v4</c>，正确写法是接 <c>/chat/completions</c>，
+    /// 而"标准补全"会塞成 <c>/v4/v1/chat/completions</c> —— 补错了比不补更气人。
+    /// 所以给一个明确的开关：关掉之后那个框里的东西**原样使用，一个字符都不动**。
+    /// </para>
+    /// </summary>
+    public bool AutoCompleteEndpoint { get; set; } = true;
+
     public string ModelListEndpoint { get; set; } = "";
 
     public override string ToString() => Name;

@@ -782,6 +782,8 @@
                                     <TextBox x:Name="ModelEndpointBox" Style="{StaticResource MonoTextBox}"
                                              TextChanged="ModelEndpoint_Changed" LostFocus="ModelEndpoint_LostFocus" />
                                     <TextBlock x:Name="ModelEndpointHint" Style="{StaticResource Caption}" Margin="0,6,0,0" TextWrapping="Wrap" />
+                                    <CheckBox x:Name="ModelAutoCompleteCheck" Margin="0,10,0,0" Click="ModelAutoComplete_Changed"
+                                              Content="自动补全这个地址（按上游格式补上 /v1/… 那段路径）" />
                                 </StackPanel>
                             </Border>
 

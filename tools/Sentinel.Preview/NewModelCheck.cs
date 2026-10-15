@@ -78,6 +78,34 @@ internal static class NewModelCheck
         Console.WriteLine($"填了「https://api.deepseek.com/anthropic」并失焦，自动补全成: 「{endpointBox.Text}」");
         ok &= endpointBox.Text == "https://api.deepseek.com/anthropic/v1/messages";
 
+        // 已经带版本段的 base：**只补最后那一段** —— 智谱那种 /api/paas/v4 就是这一类，
+        // 再塞一个 /v1 进去就成了 /v4/v1/chat/completions（错），而正确的是 /v4/chat/completions。
+        formatBox.SelectedIndex = 0;   // OpenAI
+        Pump();
+
+        endpointBox.Text = "https://open.bigmodel.cn/api/paas/v4";
+        endpointBox.RaiseEvent(new RoutedEventArgs(UIElement.LostFocusEvent));
+        Pump();
+
+        Console.WriteLine($"带版本段的「…/api/paas/v4」补全成: 「{endpointBox.Text}」");
+        ok &= endpointBox.Text == "https://open.bigmodel.cn/api/paas/v4/chat/completions";
+
+        // 关掉自动补全：**原样使用，一个字符都不动** —— 有些服务商的路径就是不长标准那样，
+        // 补错了比不补更气人（智谱那种地址就是这么被补错的）。
+        var autoComplete = (CheckBox)window.FindName("ModelAutoCompleteCheck")!;
+        autoComplete.IsChecked = false;
+        Pump();
+
+        endpointBox.Text = "https://open.bigmodel.cn/api/paas/v4";
+        endpointBox.RaiseEvent(new RoutedEventArgs(UIElement.LostFocusEvent));
+        Pump();
+
+        Console.WriteLine($"关掉自动补全后，同样填「…/api/paas/v4」: 「{endpointBox.Text}」");
+        ok &= endpointBox.Text == "https://open.bigmodel.cn/api/paas/v4";
+
+        autoComplete.IsChecked = true;   // 还原，别影响后面的应用
+        Pump();
+
         // 填模型名、点「应用修改」。
         modelBox.Text = "deepseek-flash";
         Pump();

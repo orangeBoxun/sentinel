@@ -410,7 +410,7 @@ public partial class MainWindow : Window
 
     private string ModelSignature() => string.Join('\u001f',
         ModelNameBox.Text, ModelNoteBox.Text, ModelWebsiteBox.Text,
-        ModelEndpointBox.Text, ModelListEndpointBox.Text,
+        ModelEndpointBox.Text, ModelListEndpointBox.Text, ModelAutoCompleteCheck.IsChecked,
         ModelCodePicker.Text,
         (ModelFormatBox.SelectedItem as Choice<ApiFormat>)?.Value,
         ModelActiveCheck.IsChecked,
@@ -2028,6 +2028,7 @@ public partial class MainWindow : Window
         ModelNoteBox.Text = provider.Note;
         ModelWebsiteBox.Text = provider.Website;
         ModelEndpointBox.Text = provider.Endpoint;
+        ModelAutoCompleteCheck.IsChecked = provider.AutoCompleteEndpoint;
         ModelFormatBox.SelectedItem = ((Choice<ApiFormat>[])ModelFormatBox.ItemsSource!)
             .FirstOrDefault(c => c.Value == provider.Format);
         // 可编辑下拉框有个坑：ItemsSource 为空的时候，程序设进去的 Text 读得出来、屏幕上却是空的。
@@ -2164,18 +2165,29 @@ public partial class MainWindow : Window
         if (url.Length == 0 || format is null)
             return;
 
+        // 人明确关掉了补全 —— **原样使用，一个字符都不动**。
+        if (ModelAutoCompleteCheck.IsChecked != true)
+            return;
+
         // 末尾是斜杠 = 人明确表示"写完了，别动它"。
         if (url.EndsWith('/'))
             return;
 
         var lower = url.ToLowerInvariant();
 
+        // 地址里已经有版本段（/v4、/api/v1 这种）时，**只补最后那一段** ——
+        // 再塞一个 /v1 进去就是错的：智谱的 .../api/paas/v4 正确写法是接 /chat/completions。
+        var versioned = System.Text.RegularExpressions.Regex.IsMatch(lower, @"/v\d+(/|$)");
+
         // 按格式补全：地址里没有那个格式该有的关键词，就补上标准路径。
         var suffix = format switch
         {
-            ApiFormat.Anthropic when !lower.Contains("message") => "/v1/messages",
-            ApiFormat.Responses when !lower.Contains("response") => "/v1/responses",
-            ApiFormat.OpenAi when !lower.Contains("completion") => "/v1/chat/completions",
+            ApiFormat.Anthropic when !lower.Contains("message")
+                => versioned ? "/messages" : "/v1/messages",
+            ApiFormat.Responses when !lower.Contains("response")
+                => versioned ? "/responses" : "/v1/responses",
+            ApiFormat.OpenAi when !lower.Contains("completion")
+                => versioned ? "/chat/completions" : "/v1/chat/completions",
             _ => null,
         };
 
@@ -2249,6 +2261,14 @@ public partial class MainWindow : Window
     }
 
     private void ModelFormat_Changed(object sender, RoutedEventArgs e) => ShowEndpointHint();
+
+    private void ModelAutoComplete_Changed(object sender, RoutedEventArgs e)
+    {
+        if (IsLoaded)
+            _modelForm.Reload();   // 改了就算这一页有未保存的改动
+
+        ShowEndpointHint();
+    }
 
     private void ModelEndpoint_Changed(object sender, TextChangedEventArgs e)
     {
@@ -2342,6 +2362,7 @@ public partial class MainWindow : Window
         _selectedModel.Website = ModelWebsiteBox.Text.Trim();
         _selectedModel.ModelListEndpoint = ModelListEndpointBox.Text.Trim();
         _selectedModel.Endpoint = ModelEndpointBox.Text.Trim();
+        _selectedModel.AutoCompleteEndpoint = ModelAutoCompleteCheck.IsChecked == true;
         _selectedModel.Model = ModelCodePicker.Text.Trim();
         _selectedModel.ApiKey = CurrentKey();
 
