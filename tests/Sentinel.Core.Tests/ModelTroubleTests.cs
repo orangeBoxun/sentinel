@@ -69,6 +69,12 @@ public class ModelTroubleTests
         Assert.Equal(ModelTroubleKind.NeedsAttention,
             ModelTrouble.Classify(ModelCallOutcome.NeedsAttention, "http://127.0.0.1:11434/v1"));
 
+        // 超时：服务在（只是慢/卡）→ 要处理，但不是"拉起来就行"那一类（不按 30 秒催）
+        Assert.Equal(ModelTroubleKind.NeedsAttention,
+            ModelTrouble.Classify(ModelCallOutcome.Timeout, "http://127.0.0.1:11434/v1"));
+        Assert.Equal(ModelTroubleKind.NeedsAttention,
+            ModelTrouble.Classify(ModelCallOutcome.Timeout, "https://api.deepseek.com/anthropic/v1/messages"));
+
         // 拿到了判定 / 服务端抽风 → 不吵
         Assert.Equal(ModelTroubleKind.None, ModelTrouble.Classify(ModelCallOutcome.Answered, "http://127.0.0.1:11434/v1"));
         Assert.Equal(ModelTroubleKind.None, ModelTrouble.Classify(ModelCallOutcome.NoAnswer, "http://127.0.0.1:11434/v1"));

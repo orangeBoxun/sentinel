@@ -262,6 +262,88 @@ public class ModelTests
         Assert.NotNull(result.Reason);
     }
 
+    [Fact]
+    public async Task A_request_that_times_out_is_its_own_kind()
+    {
+        // 超时和"连不上"是两件事：服务在，只是慢或者卡住了（本机跑大模型尤其常见）。
+        // 分开之后提示的话术和节奏才对得上 —— "拉起来就行"和"换个小的模型"不是一句话。
+        var client = new ModelClient(new HttpClient(new SlowHandler()) { Timeout = TimeSpan.FromMilliseconds(300) });
+
+        var result = await client.JudgeAsync(Provider(ApiFormat.OpenAi), "x", Snapshot(), default);
+
+        Assert.Equal(ModelCallOutcome.Timeout, result.Outcome);
+        Assert.Contains("秒", result.Message);
+    }
+
+    [Fact]
+    public async Task A_stale_problem_clears_itself_once_the_model_answers_again()
+    {
+        // 模型恢复之后，那条"停摆"状态**自己会清掉** —— 不用等谁打开一个命中规则的页面。
+        // 不修的话，"昨晚模型没起来"留下的状态会一直挂着、提醒一直响，而它早就好了。
+        var provider = Provider(ApiFormat.OpenAi);
+
+        // 用本地地址：公网连不上是**故意不吵**的，那样测不出这条。
+        provider.Endpoint = "http://127.0.0.1:11434/v1/chat/completions";
+
+        var config = new AppConfig();
+        config.Models.Add(provider);
+        config.ActiveModelId = provider.Id;
+
+        var handler = new SwitchHandler { Fail = true };
+        var supervisor = new ModelSupervisor(
+            () => config,
+            new ModelClient(new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(10) }));
+
+        supervisor.Request("r", "禁令", Snapshot());
+
+        await WaitUntil(() => supervisor.BlockingIssue is not null);
+        Assert.NotNull(supervisor.BlockingIssue);
+        Assert.Equal(ModelTroubleKind.LocalUnreachable, supervisor.BlockingKind);
+
+        handler.Fail = false;   // 服务起来了
+
+        Assert.True(await supervisor.ProbeAsync());
+        Assert.Null(supervisor.BlockingIssue);
+        Assert.Equal(ModelTroubleKind.None, supervisor.BlockingKind);
+    }
+
+    private static async Task WaitUntil(Func<bool> condition)
+    {
+        for (var i = 0; i < 60 && !condition(); i++)
+            await Task.Delay(50);
+
+        Assert.True(condition(), "等超时了");
+    }
+
+    /// <summary>一直拖到超时为止。</summary>
+    private sealed class SlowHandler : HttpMessageHandler
+    {
+        protected override async Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            await Task.Delay(TimeSpan.FromSeconds(10), cancellationToken);
+            return new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent("{}") };
+        }
+    }
+
+    /// <summary>可以中途从"坏"翻成"好"，用来测自愈。</summary>
+    private sealed class SwitchHandler : HttpMessageHandler
+    {
+        public bool Fail { get; set; }
+
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            if (Fail)
+                throw new HttpRequestException("目标计算机积极拒绝，无法连接。");
+
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("""{"choices":[{"message":{"content":"[false, \"没问题\"]"}}]}"""),
+            });
+        }
+    }
+
     // ------------------------------------------------------------------ 失败分类
 
     [Theory]

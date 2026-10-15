@@ -21,7 +21,7 @@ public enum ModelCallOutcome
     NoAnswer,
 
     /// <summary>
-    /// 压根没连上：DNS 失败、连接被拒、TLS 握手失败、超时。
+    /// 压根没连上：DNS 失败、连接被拒、TLS 握手失败。
     ///
     /// <para>
     /// 单独分出来，是因为"要不要吵"取决于**那是谁的服务**：公网的连不上按"没网"处理（不管），
@@ -30,6 +30,17 @@ public enum ModelCallOutcome
     /// </para>
     /// </summary>
     Unreachable,
+
+    /// <summary>
+    /// 请求发出去了，但等到超时都没答上来。
+    ///
+    /// <para>
+    /// 和"连不上"是两件事：这个说明服务在（只是慢或者卡住了）—— 本机跑大模型时很常见。
+    /// 提醒的话术和节奏都不一样（那个是"拉起来就行"，这个得换小模型或者少喂点内容），
+    /// 所以分成两类。
+    /// </para>
+    /// </summary>
+    Timeout,
 
     /// <summary>
     /// 要你去处理：钥匙不对（401/403）、欠费（402）、超额限流（429）。
@@ -78,6 +89,21 @@ public sealed class ModelClient
         Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
     };
 
+    /// <summary>
+    /// 共用一个 HttpClient。
+    ///
+    /// <para>
+    /// 以前每个 ModelClient 自己 new 一个 —— 而 ModelClient 是被监督器持有的，监督器又随着监控
+    /// 重建（Agent 重启、配置改动）。旧的那个一旦被回收，它名下的连接跟着关掉，
+    /// <b>正在飞的那次请求就地夭折</b>，报出来的正是"由于线程退出或应用程序请求，已中止 I/O 操作"。
+    /// 然后它被记成"连不上"，于是弹"本地模型没起来" —— 而模型一直好好的。
+    /// </para>
+    /// <para>
+    /// 共用一个就不会：这个实例活到进程结束，连接池也一直在，谁被回收都不影响飞行中的请求。
+    /// </para>
+    /// </summary>
+    private static readonly HttpClient SharedHttp = new() { Timeout = TimeSpan.FromSeconds(60) };
+
     public ModelClient(HttpClient? http = null)
     {
         // 60 秒，不是 20。
@@ -88,7 +114,7 @@ public sealed class ModelClient
         //
         // 反过来，等久一点的代价只是一次调用占着一条后台线程：判定是发出去就不管的，
         // 不挡监控循环，结果也会按内容指纹缓存起来。
-        _http = http ?? new HttpClient { Timeout = TimeSpan.FromSeconds(60) };
+        _http = http ?? SharedHttp;
     }
 
     public async Task<ModelCallResult> JudgeAsync(
@@ -118,11 +144,16 @@ public sealed class ModelClient
         }
         catch (Exception ex)
         {
-            // 连不上、DNS 失败、超时、TLS 握手失败 —— 归"连不上"这一类（不是"没网"：
-            // 是不是没网要看得更远一点，见 ModelTrouble）。
-            //
             // 原因要带出去：配服务商的时候，"连不上"三个字帮不上任何忙，而
             // "No such host is known" 和 "timed out" 是两件完全不同的事。
+            if (LooksLikeTimeout(ex))
+            {
+                return new ModelCallResult(ModelCallOutcome.Timeout,
+                    Message: $"等了 {_http.Timeout.TotalSeconds:0} 秒也没答上来 —— 模型太慢或者卡住了。"
+                             + "本机跑大模型很容易这样：换小一点的模型，或者在「目标」页把「读取正文」关掉，"
+                             + "少喂点内容给它。");
+            }
+
             return new ModelCallResult(ModelCallOutcome.Unreachable, Message: Describe(ex));
         }
 
@@ -203,6 +234,33 @@ public sealed class ModelClient
     /// 没说 —— 握手超时、证书不对、代理拦了，全都是这一句。真正的原因在内层，所以要一起带出来。
     /// </para>
     /// </summary>
+    /// <summary>
+    /// 这次失败是不是"等超时了"。
+    ///
+    /// <para>
+    /// 认三个形状：<c>TaskCanceledException</c>（HttpClient 超时的标准形状）、
+    /// 内层是 <c>TimeoutException</c>、以及那句"由于线程退出或应用程序请求，已中止 I/O 操作" ——
+    /// 最后这句在 .NET 里既是超时的样子、也是"连接被回收"的样子，所以它必须靠共享 HttpClient
+    /// 先把后一种消灭掉，这里才敢把它算进超时（见 <see cref="SharedHttp"/>）。
+    /// </para>
+    /// </summary>
+    private static bool LooksLikeTimeout(Exception ex)
+    {
+        for (var current = ex; current is not null; current = current.InnerException)
+        {
+            if (current is TaskCanceledException or TimeoutException)
+                return true;
+
+            if (current.Message.Contains("aborted", StringComparison.OrdinalIgnoreCase)
+                || current.Message.Contains("已中止", StringComparison.Ordinal))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     private static string Describe(Exception ex)
     {
         var parts = new List<string>();

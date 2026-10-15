@@ -205,6 +205,56 @@ public sealed class ModelSupervisor : IModelSupervisor
         return now - recent.At <= VerdictLifetime ? recent.Verdict : null;
     }
 
+    /// <summary>
+    /// 现在到底通不通 —— **真去问一次**，问通了就把停摆状态清掉。
+    ///
+    /// <para>
+    /// 为什么要这个：停摆状态原来**只在拿到一次判定时才清**，而判定只在有人打开命中规则的页面
+    /// 时才发起。于是"昨天模型没起来"留下的那条状态会一直挂着 —— 提醒器一直响，而它早就好了。
+    /// 状态必须跟随事实，不能等下一次有人踩到页面才更新。
+    /// </para>
+    /// <para>
+    /// 只在**已经处于停摆**时才发请求（见开头那句 return）：正常运行时它一次都不发，不花钱。
+    /// </para>
+    /// </summary>
+    public async Task<bool> ProbeAsync()
+    {
+        if (BlockingIssue is null && BlockingKind == ModelTroubleKind.None)
+            return true;   // 本来就没停摆，不用探
+
+        var provider = ActiveProvider();
+
+        if (provider is null)
+            return false;
+
+        try
+        {
+            var result = await _client
+                .JudgeAsync(provider, ProbeInstruction, ProbeSnapshot(), CancellationToken.None)
+                .ConfigureAwait(false);
+
+            var kind = ModelTrouble.Classify(result.Outcome, provider.Endpoint);
+
+            lock (_gate)
+            {
+                BlockingKind = kind;
+                BlockingIssue = kind == ModelTroubleKind.None ? null : result.Message;
+            }
+
+            return BlockingKind == ModelTroubleKind.None;
+        }
+        catch
+        {
+            return false;   // 探测本身炸了：当作"还不通"，不动状态
+        }
+    }
+
+    /// <summary>探测用的那句话：越短越好，它唯一的任务是"走通一次"。</summary>
+    private const string ProbeInstruction = "这是一次连通性探测。照常回答即可。";
+
+    private static ContentSnapshot ProbeSnapshot() =>
+        new("(探测)", "(探测)", null, DateTimeOffset.Now);
+
     public void Request(string ruleId, string instruction, ContentSnapshot snapshot)
     {
         var fingerprint = ContentFingerprint.Of(snapshot);
@@ -278,8 +328,15 @@ public sealed class ModelSupervisor : IModelSupervisor
                     BlockingIssue = BlockingKind == ModelTroubleKind.None ? null : result.Message;
                     break;
 
+                case ModelCallOutcome.Timeout:
+                    // 等超时：服务在，只是慢/卡。这也要说 —— 不然那几条规则一样是悄悄失效，
+                    // 而人只会觉得"监控好像不太灵"。话术和节奏在 ModelTrouble 里定。
+                    BlockingKind = ModelTrouble.Classify(result.Outcome, provider.Endpoint);
+                    BlockingIssue = result.Message;
+                    break;
+
                 case ModelCallOutcome.NoAnswer:
-                    // 没网、超时、服务端抽风：不管，也不提醒。记下判定为空，等退避过去再试。
+                    // 服务端抽风、回来的东西看不懂：不管，也不提醒。记下判定为空，等退避过去再试。
                     break;
             }
         }

@@ -41,17 +41,20 @@ internal sealed class ModelAlertWatcher : IDisposable
 
     private DateTimeOffset _lastShown = DateTimeOffset.MinValue;
 
+    /// <summary>探测进行中就不重复发 —— 一次请求的时间可能比定时器间隔还长。</summary>
+    private bool _probing;
+
     public ModelAlertWatcher(AgentState state, TrayIcon tray)
     {
         _state = state;
         _tray = tray;
 
         _timer = new DispatcherTimer { Interval = PollEvery };
-        _timer.Tick += (_, _) => Check();
+        _timer.Tick += async (_, _) => await CheckAsync();
         _timer.Start();
     }
 
-    private void Check()
+    private async Task CheckAsync()
     {
         var supervisor = _state.Monitor.ModelSupervisor;
         var issue = supervisor?.BlockingIssue;
@@ -61,6 +64,35 @@ internal sealed class ModelAlertWatcher : IDisposable
             // 修好了。下次再出问题要立刻提醒，而不是接着上一次的计时。
             _lastShown = DateTimeOffset.MinValue;
             return;
+        }
+
+        // **响之前先真问一次。** 那条停摆状态可能是陈旧的：它只在拿到判定时才被清掉，而判定要有人
+        // 打开命中规则的页面才发起 —— 于是"昨晚模型没起来"留下的状态会一直挂着，提醒一直响，
+        // 而它早就好了。探测通了就清掉状态、这次也不响。
+        if (!_probing)
+        {
+            _probing = true;
+
+            try
+            {
+                if (await supervisor!.ProbeAsync())
+                {
+                    _lastShown = DateTimeOffset.MinValue;
+                    return;
+                }
+            }
+            finally
+            {
+                _probing = false;
+            }
+
+            issue = supervisor!.BlockingIssue;
+
+            if (issue is null)
+            {
+                _lastShown = DateTimeOffset.MinValue;
+                return;
+            }
         }
 
         var local = supervisor!.BlockingKind == ModelTroubleKind.LocalUnreachable;

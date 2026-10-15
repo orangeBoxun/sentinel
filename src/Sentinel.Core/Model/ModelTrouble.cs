@@ -46,6 +46,11 @@ public static class ModelTrouble
     public static ModelTroubleKind Classify(ModelCallOutcome outcome, string? endpoint) => outcome switch
     {
         ModelCallOutcome.NeedsAttention => ModelTroubleKind.NeedsAttention,
+
+        // 等超时：服务在，只是慢/卡。要处理（换模型或关掉读正文），但那不是"拉起来就行"，
+        // 所以不归"本地没起来"那一类，也不按它的 30 秒节奏催。
+        ModelCallOutcome.Timeout => ModelTroubleKind.NeedsAttention,
+
         ModelCallOutcome.Unreachable when IsLocal(endpoint) => ModelTroubleKind.LocalUnreachable,
         _ => ModelTroubleKind.None,
     };
