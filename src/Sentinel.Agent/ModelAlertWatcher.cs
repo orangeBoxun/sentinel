@@ -23,11 +23,12 @@ internal sealed class ModelAlertWatcher : IDisposable
     private static readonly TimeSpan RepeatEvery = TimeSpan.FromMinutes(5);
 
     /// <summary>
-    /// 本地服务没起来那类：**30 秒一次**。
+    /// 「你自己的服务没起来」和「慢到拿不到判定」这两类：**30 秒一次**。
     ///
     /// <para>
-    /// 它和上面那类不一样：这是你自己的东西，拉起来就好（一条命令的事），而这期间
-    /// 你照样能刷 —— 模型规则等于不存在，且没有任何别的迹象。所以要催得勤。
+    /// 它们和上面那类不一样：模型规则等于不存在，而你照样能刷，界面上没有任何别的迹象。
+    /// 两件都是你一分钟内能办的事（拉起来、或者换个模型），所以要催得勤 ——
+    /// 不然"切一下本地慢模型"就等于悄悄把模型监督关掉了。
     /// </para>
     /// </summary>
     private static readonly TimeSpan LocalRepeatEvery = TimeSpan.FromSeconds(30);
@@ -95,25 +96,43 @@ internal sealed class ModelAlertWatcher : IDisposable
             }
         }
 
-        var local = supervisor!.BlockingKind == ModelTroubleKind.LocalUnreachable;
-        var repeat = local ? LocalRepeatEvery : RepeatEvery;
+        var kind = supervisor!.BlockingKind;
+        var urgent = kind is ModelTroubleKind.LocalUnreachable or ModelTroubleKind.TooSlow;
+        var repeat = urgent ? LocalRepeatEvery : RepeatEvery;
 
         if (DateTimeOffset.Now - _lastShown < repeat)
             return;
 
         _lastShown = DateTimeOffset.Now;
 
-        _tray.ShowAlert(
-            local ? "Sentinel · 本地模型没起来" : "Sentinel · 模型监督停了",
-            local
-                ? $"{issue}\n\n"
-                  + "这是你自己机器上（或内网）的服务，拉起来就行 —— 比如把 Ollama 启动起来。\n"
-                  + "在你拉起它之前，网站照样打得开，但「模型监督」的规则等于不存在 —— 没人判了。"
-                : $"{issue}\n\n"
-                  + "在修好之前，「模型监督」的规则不会生效 —— 它们现在等于不存在。\n"
-                  + "去「大语言模型」页充值或者换一个服务商；不想用了就把「启用」取消掉（那算放宽，需要令牌）。",
-            acted: true,
-            AlertStyle.Fullscreen);
+        var title = kind switch
+        {
+            ModelTroubleKind.LocalUnreachable => "Sentinel · 本地模型没起来",
+            ModelTroubleKind.TooSlow => "Sentinel · 模型太慢，判定拿不到",
+            _ => "Sentinel · 模型监督停了",
+        };
+
+        var body = kind switch
+        {
+            ModelTroubleKind.LocalUnreachable =>
+                $"{issue}\n\n"
+                + "这是你自己机器上（或内网）的服务，拉起来就行 —— 比如把 Ollama 启动起来。\n"
+                + "在你拉起它之前，网站照样打得开，但「模型监督」的规则等于不存在 —— 没人判了。",
+
+            ModelTroubleKind.TooSlow =>
+                $"{issue}\n\n"
+                + "**换一个小一点的模型，或者换一个服务商** —— 慢到拿不到判定，和没有判定是一回事："
+                + "那几条规则现在等于不存在，而你照样能刷。\n"
+                + "本机跑大模型最容易这样；在「大语言模型」页把模型名换小一档（比如 7B 换成 3B），"
+                + "或者启用一个在线服务商。",
+
+            _ =>
+                $"{issue}\n\n"
+                + "在修好之前，「模型监督」的规则不会生效 —— 它们现在等于不存在。\n"
+                + "去「大语言模型」页充值或者换一个服务商；不想用了就把「启用」取消掉（那算放宽，需要令牌）。",
+        };
+
+        _tray.ShowAlert(title, body, acted: true, AlertStyle.Fullscreen);
     }
 
     public void Dispose() => _timer.Stop();

@@ -272,7 +272,9 @@ public class ModelTests
         var result = await client.JudgeAsync(Provider(ApiFormat.OpenAi), "x", Snapshot(), default);
 
         Assert.Equal(ModelCallOutcome.Timeout, result.Outcome);
-        Assert.Contains("秒", result.Message);
+        Assert.Contains("没答上来", result.Message);
+        Assert.Contains("模型", result.Message);   // 话术要点名换模型/换服务商
+
     }
 
     [Fact]

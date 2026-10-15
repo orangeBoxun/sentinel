@@ -90,19 +90,22 @@ public sealed class ModelClient
     };
 
     /// <summary>
-    /// 共用一个 HttpClient。
+    /// 共用一个 HttpClient。超时给到 <b>3 分钟</b>。
     ///
     /// <para>
-    /// 以前每个 ModelClient 自己 new 一个 —— 而 ModelClient 是被监督器持有的，监督器又随着监控
-    /// 重建（Agent 重启、配置改动）。旧的那个一旦被回收，它名下的连接跟着关掉，
-    /// <b>正在飞的那次请求就地夭折</b>，报出来的正是"由于线程退出或应用程序请求，已中止 I/O 操作"。
-    /// 然后它被记成"连不上"，于是弹"本地模型没起来" —— 而模型一直好好的。
+    /// 共用的理由：以前每个 ModelClient 自己 new 一个，而 ModelClient 被监督器持有、监督器又随着
+    /// 监控重建（Agent 重启、配置改动）。旧的一被回收，它名下的连接就关了，<b>正在飞的那次请求
+    /// 就地夭折</b>，报出来正是"由于线程退出或应用程序请求，已中止 I/O 操作" —— 然后被记成
+    /// "连不上"，弹"本地模型没起来"，而模型一直好好的。
     /// </para>
     /// <para>
-    /// 共用一个就不会：这个实例活到进程结束，连接池也一直在，谁被回收都不影响飞行中的请求。
+    /// 超时给长的理由：**慢不等于算不出来**。本机跑 7B 判一整页实测要两分钟左右，卡在 60 秒
+    /// 上等于把能用的判定白白扔掉，而那几条规则就真的等于不存在了。宁可等三分钟拿一个判定
+    /// （判定是按内容指纹缓存的，页面没变就一直有效），也不要在六十秒上放弃 —— 真等不到，
+    /// 提醒会说清"太慢，换模型或换服务商"（见 <see cref="ModelTrouble"/>）。
     /// </para>
     /// </summary>
-    private static readonly HttpClient SharedHttp = new() { Timeout = TimeSpan.FromSeconds(60) };
+    private static readonly HttpClient SharedHttp = new() { Timeout = TimeSpan.FromSeconds(180) };
 
     public ModelClient(HttpClient? http = null)
     {
@@ -149,9 +152,9 @@ public sealed class ModelClient
             if (LooksLikeTimeout(ex))
             {
                 return new ModelCallResult(ModelCallOutcome.Timeout,
-                    Message: $"等了 {_http.Timeout.TotalSeconds:0} 秒也没答上来 —— 模型太慢或者卡住了。"
-                             + "本机跑大模型很容易这样：换小一点的模型，或者在「目标」页把「读取正文」关掉，"
-                             + "少喂点内容给它。");
+                    Message: $"等了 {_http.Timeout.TotalMinutes:0} 分钟也没答上来 —— 模型太慢，或者卡住了。"
+                             + "换一个小一点的模型，或者换一个服务商（本机跑大模型最容易这样）。"
+                             + "也可以先把「目标」页的「读取正文」关掉，少喂点内容给它。");
             }
 
             return new ModelCallResult(ModelCallOutcome.Unreachable, Message: Describe(ex));

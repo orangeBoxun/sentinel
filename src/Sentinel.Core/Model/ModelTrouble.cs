@@ -18,6 +18,16 @@ public enum ModelTroubleKind
     /// 你自己的服务没起来（本机或内网）。这一类要催得勤 —— 它最好办，拉起来就行。
     /// </summary>
     LocalUnreachable,
+
+    /// <summary>
+    /// 等超时了：服务在，但**慢到拿不到判定**。
+    ///
+    /// <para>
+    /// 它和"没起来"是同一个后果 —— 那几条规则等于不存在 —— 所以**要一样地吵**（30 秒一次），
+    /// 只是话不一样：那个是"拉起来就行"，这个是"换小一点的模型，或者换一个服务商"。
+    /// </para>
+    /// </summary>
+    TooSlow,
 }
 
 /// <summary>
@@ -47,9 +57,9 @@ public static class ModelTrouble
     {
         ModelCallOutcome.NeedsAttention => ModelTroubleKind.NeedsAttention,
 
-        // 等超时：服务在，只是慢/卡。要处理（换模型或关掉读正文），但那不是"拉起来就行"，
-        // 所以不归"本地没起来"那一类，也不按它的 30 秒节奏催。
-        ModelCallOutcome.Timeout => ModelTroubleKind.NeedsAttention,
+        // 等超时：服务在，只是慢到拿不到判定。后果和"没起来"一样（规则等于不存在），
+        // 所以也一样地吵 —— 不管地址是哪儿：本地慢和远端慢，要办的事都是"换模型或换服务商"。
+        ModelCallOutcome.Timeout => ModelTroubleKind.TooSlow,
 
         ModelCallOutcome.Unreachable when IsLocal(endpoint) => ModelTroubleKind.LocalUnreachable,
         _ => ModelTroubleKind.None,

@@ -273,8 +273,9 @@ public sealed class ModelSupervisor : IModelSupervisor
 
             if (_lastAttempt.TryGetValue(key, out var last))
             {
-                // 本地服务没起来那种，退避要短：它最好办（拉起来就行），早点试通早点恢复。
-                var wait = BlockingKind == ModelTroubleKind.LocalUnreachable
+                // 本地没起来、或者模型慢得拿不到判定：都按短退避重试 —— 这两类最好办
+                // （拉起来、或者换个模型），早点试通早点恢复。
+                var wait = BlockingKind is ModelTroubleKind.LocalUnreachable or ModelTroubleKind.TooSlow
                     ? RetryAfterNoAnswer
                     : BlockingIssue is null ? RetryAfterNoAnswer : RetryAfterAttention;
                 if (now - last < wait)
