@@ -164,7 +164,7 @@ public sealed class ModelClient
             var body = await response.Content.ReadAsStringAsync(token).ConfigureAwait(false);
 
             if (!response.IsSuccessStatusCode)
-                return ClassifyFailure(response.StatusCode, body);
+                return ClassifyFailure(provider, response.StatusCode, body);
 
             var text = ExtractAnswerText(provider.Format, body);
             if (string.IsNullOrWhiteSpace(text))
@@ -343,6 +343,54 @@ public sealed class ModelClient
     }
 
     /// <summary>界面提示用的那个：最可能的那个。</summary>
+    /// <summary>
+    /// 把一个"只写到 base"的地址补成完整的请求地址；已经完整、或者补不出来就返回 null。
+    ///
+    /// <para>
+    /// 和界面失焦时的自动补全是同一套规则，区别只有一个：这里**不管末尾有没有斜杠**。
+    /// 那个约定（斜杠 = 别动我写的）只属于"悄悄改用户输入"的场合；而"测试连接"是在问
+    /// "这条路到底通不通"，多试一种写法没有任何副作用 —— 用户那个
+    /// <c>…/api/paas/v4/</c> 就是这么卡在 404 上的。
+    /// </para>
+    /// </summary>
+    public static string? CompleteEndpoint(string? endpoint, ApiFormat format)
+    {
+        if (string.IsNullOrWhiteSpace(endpoint))
+            return null;
+
+        var url = endpoint.Trim().TrimEnd('/');
+
+        if (!Uri.TryCreate(url, UriKind.Absolute, out _))
+            return null;
+
+        var lower = url.ToLowerInvariant();
+
+        // **已经以某个已知叶子结尾的，就不动它。** 光看"这个格式该有的关键词在不在"不够：
+        // 一个 Anthropic 的完整地址（…/v1/messages）在 OpenAI 格式下会被那个判断漏过去，
+        // 于是被补成 …/v1/messages/chat/completions。叶片是最直接的判据。
+        foreach (var leaf in new[] { "/chat/completions", "/completions", "/messages", "/responses" })
+        {
+            if (lower.EndsWith(leaf, StringComparison.Ordinal))
+                return null;
+        }
+
+        // 已经带版本段（/v4、/api/v1 这种）就只补最后那一段：再塞一个 /v1 进去是错的。
+        var versioned = System.Text.RegularExpressions.Regex.IsMatch(lower, @"/v\d+(/|$)");
+
+        var suffix = format switch
+        {
+            ApiFormat.Anthropic when !lower.Contains("message")
+                => versioned ? "/messages" : "/v1/messages",
+            ApiFormat.Responses when !lower.Contains("response")
+                => versioned ? "/responses" : "/v1/responses",
+            ApiFormat.OpenAi when !lower.Contains("completion")
+                => versioned ? "/chat/completions" : "/v1/chat/completions",
+            _ => null,
+        };
+
+        return suffix is null ? null : url + suffix;
+    }
+
     public static string SuggestListEndpoint(string? endpoint) =>
         SuggestListEndpoints(endpoint).FirstOrDefault() ?? "";
 
@@ -488,12 +536,16 @@ public sealed class ModelClient
 
     // ------------------------------------------------------------------ 三类失败
 
-    private static ModelCallResult ClassifyFailure(HttpStatusCode status, string body)
+    private static ModelCallResult ClassifyFailure(ModelProvider provider, HttpStatusCode status, string body)
     {
         var detail = Shorten(body);
 
+        // 404 的时候顺手把"补全之后长什么样"算出来给人看 —— 那比举一个别家的例子有用得多。
+        var complete = CompleteEndpoint(provider.Endpoint, provider.Format);
+
         return status switch
         {
+
             // 钥匙不对、欠费、超额：三条都得让人去处理，不然模型监督已经停了而他不知道。
             HttpStatusCode.Unauthorized => new(ModelCallOutcome.NeedsAttention,
                 Message: $"API key 不对或者已经失效（401）。{detail}"),
@@ -510,8 +562,10 @@ public sealed class ModelClient
             // 地址写错是**配服务商时最常见的一种错**，而它以前被归进"没网"那一类 ——
             // 于是界面上说"连不上（没网、超时……）"，人就去查网络，而真正的问题是地址少了一段路径。
             HttpStatusCode.NotFound => new(ModelCallOutcome.NeedsAttention,
-                Message: "地址不对（404）—— 服务端没有这个路径。请求地址要写**完整**的，比如 "
-                         + "https://api.deepseek.com/anthropic/v1/messages（base 后面那段 /v1/messages 不能少）。"
+                Message: "地址不对（404）—— 服务端没有这个路径。"
+                         + (complete is null
+                             ? "请求地址要写**完整**的（base 后面那段路径不能少）。"
+                             : $"你填的是「{provider.Endpoint}」，补全之后是「{complete}」—— 试一下这个。")
                          + detail),
 
             HttpStatusCode.BadRequest => new(ModelCallOutcome.NeedsAttention,

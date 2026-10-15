@@ -1,4 +1,5 @@
 using Sentinel.Core.Model;
+using Sentinel.Core.Models;
 using Xunit;
 
 namespace Sentinel.Core.Tests;
@@ -64,6 +65,34 @@ public sealed class ModelListTests
         // 猜不出来返回空字符串，界面会说"还不知道去哪个地址取" —— 猜一个错的更糟。
         Assert.Equal("", ModelClient.SuggestListEndpoint(endpoint));
     }
+
+    [Theory]
+    // 只写到 base（这是最常见的错）：补上对应格式的那一段
+    [InlineData("https://api.deepseek.com/anthropic", ApiFormat.Anthropic,
+                "https://api.deepseek.com/anthropic/v1/messages")]
+    [InlineData("https://api.openai.com/v1", ApiFormat.OpenAi,
+                "https://api.openai.com/v1/chat/completions")]
+    // 带版本段的服务商：只补最后那一段，别再塞一个 /v1
+    [InlineData("https://open.bigmodel.cn/api/paas/v4", ApiFormat.OpenAi,
+                "https://open.bigmodel.cn/api/paas/v4/chat/completions")]
+    [InlineData("http://127.0.0.1:11434/v1", ApiFormat.OpenAi,
+                "http://127.0.0.1:11434/v1/chat/completions")]
+    // **末尾带斜杠也补** —— 界面那条"斜杠 = 别动我写的"只管"悄悄改用户输入"；
+    // 测试连接失败时拿这个函数再试一次，多试一种写法没有副作用。
+    // 用户那台就是卡在这儿：…/api/paas/v4/ → 服务端 404 回的 path 是 /v4/
+    [InlineData("https://open.bigmodel.cn/api/paas/v4/", ApiFormat.OpenAi,
+                "https://open.bigmodel.cn/api/paas/v4/chat/completions")]
+    public void 只写到base的地址能补全(string endpoint, ApiFormat format, string expected) =>
+        Assert.Equal(expected, ModelClient.CompleteEndpoint(endpoint, format));
+
+    [Theory]
+    [InlineData("https://api.deepseek.com/anthropic/v1/messages")]   // 本来就完整
+    [InlineData("https://open.bigmodel.cn/api/paas/v4/chat/completions")]
+    [InlineData("")]
+    [InlineData("   ")]
+    [InlineData("随便写点什么")]
+    public void 补不出什么就不动它(string endpoint) =>
+        Assert.Null(ModelClient.CompleteEndpoint(endpoint, ApiFormat.OpenAi));
 
     [Fact]
     public void 智谱那种列表也认()

@@ -2173,27 +2173,10 @@ public partial class MainWindow : Window
         if (url.EndsWith('/'))
             return;
 
-        var lower = url.ToLowerInvariant();
-
-        // 地址里已经有版本段（/v4、/api/v1 这种）时，**只补最后那一段** ——
-        // 再塞一个 /v1 进去就是错的：智谱的 .../api/paas/v4 正确写法是接 /chat/completions。
-        var versioned = System.Text.RegularExpressions.Regex.IsMatch(lower, @"/v\d+(/|$)");
-
-        // 按格式补全：地址里没有那个格式该有的关键词，就补上标准路径。
-        var suffix = format switch
+        // 规则只有一份，在 ModelClient.CompleteEndpoint 里（测试连接失败时也用同一条规则）。
+        if (ModelClient.CompleteEndpoint(url, format.Value) is { } completed && completed != url)
         {
-            ApiFormat.Anthropic when !lower.Contains("message")
-                => versioned ? "/messages" : "/v1/messages",
-            ApiFormat.Responses when !lower.Contains("response")
-                => versioned ? "/responses" : "/v1/responses",
-            ApiFormat.OpenAi when !lower.Contains("completion")
-                => versioned ? "/chat/completions" : "/v1/chat/completions",
-            _ => null,
-        };
-
-        if (suffix is not null)
-        {
-            ModelEndpointBox.Text = url + suffix;
+            ModelEndpointBox.Text = completed;
             ShowEndpointHint();  // 刷一遍提示，因为地址变了
         }
     }
@@ -2418,6 +2401,39 @@ public partial class MainWindow : Window
         ModelTestResult.Foreground = (System.Windows.Media.Brush)FindResource("TextSecondary");
 
         var (text, tone) = await ProbeAsync(probe);
+
+        // 没通、而且这个地址"补一下就不一样" —— 那就拿补好的再试一次。
+        //
+        // 为什么要这样：「测试连接」用的是框里的原样地址，而用户最常见的错就是只写到 base
+        // （甚至带个尾巴斜杠，于是连自动补全都跳过了）—— 那种情况 404 一弹，人只知道"地址不对"，
+        // 却不知道对的长什么样。补一次、通了就把地址改对，比让他自己悟快得多。
+        if (tone == "Error" && ModelClient.CompleteEndpoint(probe.Endpoint, probe.Format) is { } completed)
+        {
+            var retry = new ModelProvider
+            {
+                Id = probe.Id,
+                Name = probe.Name,
+                Format = probe.Format,
+                Endpoint = completed,
+                ApiKey = probe.ApiKey,
+                Model = probe.Model,
+                Note = probe.Note,
+                Website = probe.Website,
+                ModelListEndpoint = probe.ModelListEndpoint,
+                AutoCompleteEndpoint = probe.AutoCompleteEndpoint,
+            };
+            var (retryText, retryTone) = await ProbeAsync(retry);
+
+            if (retryTone != "Error")
+            {
+                ModelEndpointBox.Text = completed;
+                ShowEndpointHint();
+                _modelForm.Reload();
+
+                text = $"你填的地址没通；补成「{completed}」之后通了 —— 已经帮你把地址改过来了。\n\n{retryText}";
+                tone = retryTone;
+            }
+        }
 
         ModelTestResult.Text = text;
         ModelTestResult.Foreground = (System.Windows.Media.Brush)FindResource(tone);
