@@ -17,13 +17,41 @@ namespace Sentinel.Core.Tests;
 public sealed class ModelListTests
 {
     [Theory]
-    [InlineData("https://api.deepseek.com/anthropic/v1/messages", "https://api.deepseek.com/v1/models")]
+    // 标准形状：去掉 /chat/completions 就是它的 /models —— 首选的候选
     [InlineData("https://api.openai.com/v1/chat/completions", "https://api.openai.com/v1/models")]
-    [InlineData("https://relay.example.com:8443/proxy/openai/v1/chat/completions",
-                "https://relay.example.com:8443/v1/models")]
-    public void 猜出来的地址是域名加V1models(string endpoint, string expected)
+    // 带版本段的服务商（智谱就是这种）：…/api/paas/v4/chat/completions → …/api/paas/v4/models
+    [InlineData("https://open.bigmodel.cn/api/paas/v4/chat/completions",
+                "https://open.bigmodel.cn/api/paas/v4/models")]
+    // 本地 Ollama
+    [InlineData("http://127.0.0.1:11434/v1/chat/completions", "http://127.0.0.1:11434/v1/models")]
+    public void 先猜请求地址里那一段(string endpoint, string expected)
     {
         Assert.Equal(expected, ModelClient.SuggestListEndpoint(endpoint));
+    }
+
+    [Theory]
+    // 列表**不在**请求路径下面的那几家：DeepSeek 的列表在域名 + /v1/models，
+    // 请求地址那一段（/anthropic/…）底下是 404 —— 所以第二个候选必须是域名那个。
+    [InlineData("https://api.deepseek.com/anthropic/v1/messages", "https://api.deepseek.com/v1/models")]
+    [InlineData("https://relay.example.com:8443/proxy/openai/v1/chat/completions",
+                "https://relay.example.com:8443/v1/models")]
+    public void 第二个候选是域名加V1models(string endpoint, string expected)
+    {
+        var candidates = ModelClient.SuggestListEndpoints(endpoint);
+
+        Assert.Contains(expected, candidates);
+        Assert.Equal(expected, candidates[^1]);   // 兜底的那个排在最后
+    }
+
+    [Fact]
+    public void 两个候选都要有_取列表时挨个试()
+    {
+        // 两个都可能错（各家不一样），所以取列表时挨个试，谁先回出模型名就用谁。
+        var candidates = ModelClient.SuggestListEndpoints("https://open.bigmodel.cn/api/paas/v4/chat/completions");
+
+        Assert.Equal(2, candidates.Count);
+        Assert.Equal("https://open.bigmodel.cn/api/paas/v4/models", candidates[0]);
+        Assert.Equal("https://open.bigmodel.cn/v1/models", candidates[1]);
     }
 
     [Theory]
@@ -35,6 +63,21 @@ public sealed class ModelListTests
     {
         // 猜不出来返回空字符串，界面会说"还不知道去哪个地址取" —— 猜一个错的更糟。
         Assert.Equal("", ModelClient.SuggestListEndpoint(endpoint));
+    }
+
+    [Fact]
+    public void 智谱那种列表也认()
+    {
+        // 真实返回（只留前三个）。顺带记一笔：**列表不是权威** ——
+        // 实测能用的 glm-4-flash 就不在里面（免费的那些常常不列）。
+        // 所以模型名那个框必须能手填，不能只让人从列表里挑。
+        var body = """{"object": "list", "data": [{"id": "glm-4.5", "object": "model", "created": 1753632000, "owned_by": "z-ai"}, {"id": "glm-4.5-air", "object": "model", "created": 1753632000, "owned_by": "z-ai"}, {"id": "glm-4.6", "object": "model", "created": 1759276800, "owned_by": "z-ai"}]}""";
+
+        var models = ModelClient.ParseModelIds(body);
+
+        Assert.Equal(3, models.Count);
+        Assert.Contains("glm-4.5", models);
+        Assert.DoesNotContain("glm-4-flash", models);
     }
 
     [Fact]

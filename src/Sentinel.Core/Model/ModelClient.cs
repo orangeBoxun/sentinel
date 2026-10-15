@@ -279,70 +279,151 @@ public sealed class ModelClient
     // ------------------------------------------------------------------ 模型列表
 
     /// <summary>
-    /// 按请求地址猜一个模型列表地址：同域名下的 <c>/v1/models</c>。
+    /// 可以拿去试的模型列表地址，**按可能性排在前面**。
     ///
     /// <para>
-    /// 这只是个**默认值**，不是真理。实测 DeepSeek 的 <c>/v1/models</c> 是 200，而请求地址上那一段
-    /// <c>/anthropic</c> 底下是 404 —— 列表不在请求路径下面。所以填出来的东西可以改，取不到的时候
-    /// 界面会把它到底试了哪个地址说出来。
+    /// 两个候选，因为各家不一样，光靠一条规则猜不准：
+    /// </para>
+    /// <list type="number">
+    /// <item><description>
+    /// <b>请求地址去掉最后一段，再接 <c>/models</c></b> —— 智谱就是这种：
+    /// <c>…/api/paas/v4/chat/completions</c> → <c>…/api/paas/v4/models</c>（实测 200 ✓）。
+    /// 本地 Ollama 也是这种：<c>…/v1/chat/completions</c> → <c>…/v1/models</c> ✓。
+    /// </description></item>
+    /// <item><description>
+    /// <b>同域名下的 <c>/v1/models</c></b> —— DeepSeek 是这种：它的列表**不在**请求路径那一段下面
+    /// （<c>/anthropic/…</c> 底下是 404），而在 <c>https://api.deepseek.com/v1/models</c> ✓。
+    /// </description></item>
+    /// </list>
+    /// <para>
+    /// 两个都可以错，所以取列表时**挨个试**，谁先回出模型名就用谁（见
+    /// <see cref="ListModelsAsync"/>）。填了「模型列表地址」就只试填的那个 —— 人说了算。
     /// </para>
     /// </summary>
-    public static string SuggestListEndpoint(string? endpoint)
+    public static IReadOnlyList<string> SuggestListEndpoints(string? endpoint)
     {
         if (string.IsNullOrWhiteSpace(endpoint))
-            return "";
+            return Array.Empty<string>();
 
-        return Uri.TryCreate(endpoint.Trim(), UriKind.Absolute, out var uri)
-            ? $"{uri.Scheme}://{uri.Authority}/v1/models"
-            : "";
+        if (!Uri.TryCreate(endpoint.Trim(), UriKind.Absolute, out var uri))
+            return Array.Empty<string>();
+
+        var candidates = new List<string>();
+
+        // 一、请求地址去掉最后那段"叶子"，再接 /models。
+        //
+        // 注意 /chat/completions 是**一个整体**：只去掉 completions 会得到
+        // ".../v1/chat/models"（错）。所以要按已知的叶子整段削。
+        var path = uri.AbsolutePath.TrimEnd('/');
+
+        foreach (var leaf in new[] { "/chat/completions", "/completions", "/messages", "/responses" })
+        {
+            if (path.EndsWith(leaf, StringComparison.OrdinalIgnoreCase))
+            {
+                path = path[..^leaf.Length];
+                break;
+            }
+        }
+
+        if (path.Length > 0)
+        {
+            var derived = $"{uri.Scheme}://{uri.Authority}{path}/models";
+
+            if (!candidates.Contains(derived, StringComparer.OrdinalIgnoreCase))
+                candidates.Add(derived);
+        }
+
+        // 二、域名 + /v1/models
+        var domain = $"{uri.Scheme}://{uri.Authority}/v1/models";
+
+        if (!candidates.Contains(domain, StringComparer.OrdinalIgnoreCase))
+            candidates.Add(domain);
+
+        return candidates;
     }
+
+    /// <summary>界面提示用的那个：最可能的那个。</summary>
+    public static string SuggestListEndpoint(string? endpoint) =>
+        SuggestListEndpoints(endpoint).FirstOrDefault() ?? "";
 
     /// <summary>取服务商的模型列表。用**表单里现在填的**那份，理由和测试连接一样。</summary>
     public async Task<ModelListResult> ListModelsAsync(ModelProvider provider, CancellationToken token)
     {
         var explicitUrl = provider.ModelListEndpoint?.Trim() ?? "";
-        var url = explicitUrl.Length > 0 ? explicitUrl : SuggestListEndpoint(provider.Endpoint);
 
-        if (url.Length == 0)
+        // 填了就只试填的那个（人说了算）；没填就挨个试候选。
+        var candidates = explicitUrl.Length > 0
+            ? new[] { explicitUrl }
+            : SuggestListEndpoints(provider.Endpoint).ToArray();
+
+        if (candidates.Length == 0)
         {
             return new ModelListResult(false, Array.Empty<string>(),
                 "还不知道去哪个地址取 —— 先把「请求地址」填上，或者直接填「模型列表地址」。");
         }
 
-        HttpResponseMessage response;
-        try
-        {
-            response = await SendWithRetryAsync(() => BuildListRequest(provider, url), token).ConfigureAwait(false);
-        }
-        catch (OperationCanceledException) when (token.IsCancellationRequested)
-        {
-            throw;
-        }
-        catch (Exception ex)
-        {
-            return new ModelListResult(false, Array.Empty<string>(), $"连不上「{url}」：{Describe(ex)}");
-        }
+        var failures = new List<string>();
 
-        using (response)
+        foreach (var url in candidates)
         {
-            var body = await response.Content.ReadAsStringAsync(token).ConfigureAwait(false);
-
-            if (!response.IsSuccessStatusCode)
+            HttpResponseMessage response;
+            try
             {
-                // 一定要带上试的是哪个地址：列表地址是猜的，猜错了只有这句话能让人改对。
-                var hint = explicitUrl.Length == 0 ? "（这是按请求地址猜的，不对就直接填「模型列表地址」）" : "";
-                return new ModelListResult(false, Array.Empty<string>(),
-                    $"试的是「{url}」，它回了 {(int)response.StatusCode}。{Shorten(body)}{hint}");
+                response = await SendWithRetryAsync(() => BuildListRequest(provider, url), token).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException) when (token.IsCancellationRequested)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                failures.Add($"「{url}」连不上：{Describe(ex)}");
+                continue;
             }
 
-            var models = ParseModelIds(body);
+            using (response)
+            {
+                var body = await response.Content.ReadAsStringAsync(token).ConfigureAwait(false);
 
-            return models.Count > 0
-                ? new ModelListResult(true, models, $"取到 {models.Count} 个模型（来自 {url}）。")
-                : new ModelListResult(false, Array.Empty<string>(),
-                    $"「{url}」回了 200，但里面没读出模型名 —— 地址可能不对。" +
-                    (explicitUrl.Length == 0 ? "这是按请求地址猜的，可以直接填「模型列表地址」。" : ""));
+                if (!response.IsSuccessStatusCode)
+                {
+                    failures.Add($"「{url}」回了 {(int)response.StatusCode}。{Shorten(body)}");
+                    continue;
+                }
+
+                // 200 也可能是**一个网页** —— 有些平台把找不到的路径交给自己前台的页面兜底，
+                // 于是你拿到一坨 HTML，看着像成功、其实地址是错的。这种要指名道姓地说出来。
+                if (LooksLikeHtml(body))
+                {
+                    failures.Add($"「{url}」回的是网页，不是模型列表 —— 这个地址是错的。");
+                    continue;
+                }
+
+                var models = ParseModelIds(body);
+
+                if (models.Count > 0)
+                    return new ModelListResult(true, models, $"取到 {models.Count} 个模型（来自 {url}）。");
+
+                failures.Add($"「{url}」回了 200，但没读出模型名。");
+            }
         }
+
+        var advice = explicitUrl.Length > 0
+            ? "这个地址是你自己填的，改一下「模型列表地址」。"
+            : "都不对就直接填「模型列表地址」（有些平台的列表压根不开放，那就手填模型名）。";
+
+        return new ModelListResult(false, Array.Empty<string>(),
+            string.Join("\n", failures) + "\n" + advice);
+    }
+
+    /// <summary>这坨东西看着像网页吗 —— 用来识破"200 但其实是前端页面兜底"。</summary>
+    private static bool LooksLikeHtml(string body)
+    {
+        var head = body.TrimStart();
+
+        return head.StartsWith("<!doctype", StringComparison.OrdinalIgnoreCase)
+               || head.StartsWith("<html", StringComparison.OrdinalIgnoreCase)
+               || head.StartsWith("<?xml", StringComparison.OrdinalIgnoreCase);
     }
 
     private static HttpRequestMessage BuildListRequest(ModelProvider provider, string url)
