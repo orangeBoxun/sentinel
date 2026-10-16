@@ -428,34 +428,40 @@ public class ModelTests
         handler.Broken = false;   // 服务起来了，但这次它回 500
 
         Assert.False(await supervisor.ProbeAsync());
+
+        // 状态没被清掉（这是这条测试的重点），只是**说法变了**：进程在、只是不干活 ——
+        // 那不是"你的服务没起来"，而是"它现在不判任何东西"。
         Assert.NotNull(supervisor.BlockingIssue);
-        Assert.Equal(ModelTroubleKind.LocalUnreachable, supervisor.BlockingKind);
+        Assert.Equal(ModelTroubleKind.NeedsAttention, supervisor.BlockingKind);
     }
 
     [Fact]
-    public async Task 公网服务变成连不上_探测认出没网就不吵了()
+    public async Task 公网服务连不上也照样要吵()
     {
-        // 反过来那条也要对：公网服务连不上本来就**不吵**（那时候网站自己也打不开，拦不拦没区别）。
-        // 探测认出来了就该照着办，不然"没网"会被当成"还坏着"，提醒一直响。
+        // 原来这里判的是"不吵"，理由是"公网连不上多半是自己没网，那时候网站自己也打不开，
+        // 拦不拦没区别"。那条理由对"整台机器断网"成立，对真正会遇到的那件事不成立：
+        // 免费的在线模型被限流、被拒绝、服务端出错 —— 网好好的、网站打得开、他照样能刷，
+        // 只是没人判了。要看的不是"这是谁的服务"，而是"还判不判得出来"。
         var provider = Provider(ApiFormat.OpenAi);   // 公网地址
 
         var config = new AppConfig();
         config.Models.Add(provider);
         config.ActiveModelId = provider.Id;
 
-        var handler = new HangThenRefuseHandler();
+        var handler = new HangThenRefuseHandler { Refuse = true };
         var supervisor = new ModelSupervisor(
             () => config,
             new ModelClient(new HttpClient(handler) { Timeout = TimeSpan.FromMilliseconds(300) }));
 
         supervisor.Request("r", "禁令", Snapshot());
-        await WaitUntil(() => supervisor.BlockingKind == ModelTroubleKind.TooSlow);
+        await WaitUntil(() => supervisor.BlockingIssue is not null);
 
-        handler.Refuse = true;
+        Assert.Equal(ModelTroubleKind.NeedsAttention, supervisor.BlockingKind);
 
-        Assert.True(await supervisor.ProbeAsync());
-        Assert.Null(supervisor.BlockingIssue);
-        Assert.Equal(ModelTroubleKind.None, supervisor.BlockingKind);
+        // 探测探到的还是"连不上" —— 那不算好了，提醒接着响
+        Assert.False(await supervisor.ProbeAsync());
+        Assert.NotNull(supervisor.BlockingIssue);
+        Assert.Equal(ModelTroubleKind.NeedsAttention, supervisor.BlockingKind);
     }
 
     /// <summary>先把连接弄断（做出停摆状态），然后改回"服务在，但它回 500"。</summary>
@@ -562,14 +568,20 @@ public class ModelTests
     }
 
     [Fact]
-    public async Task A_server_error_is_not_worth_telling_the_user_about()
+    public async Task 服务端出错也是没人判了()
     {
-        // 5xx 是服务端的事，会自己好。为它弹全屏提醒只会训练用户忽略提醒。
+        // 以前这里是"5xx 不吵"（"服务端的事，会自己好，为它弹全屏只会训练用户忽略提醒"）。
+        // 那条是照着公网大厂写的。现实里用户碰到的是**免费的在线模型被抢光**：一整天 5xx，
+        // 自己好不了，而他以为监督还在。所以 5xx 也要说 —— 只多一句"换一个能用的"。
         var (client, _) = ClientReturning("{}", HttpStatusCode.InternalServerError);
 
         var result = await client.JudgeAsync(Provider(ApiFormat.OpenAi), "x", Snapshot(), default);
 
         Assert.Equal(ModelCallOutcome.NoAnswer, result.Outcome);
+
+        // 分类上归"要你去处理"，也就是说它会提醒。
+        Assert.Equal(ModelTroubleKind.NeedsAttention,
+            ModelTrouble.Classify(result.Outcome, "https://api.openai.com/v1/chat/completions"));
     }
 
     [Fact]

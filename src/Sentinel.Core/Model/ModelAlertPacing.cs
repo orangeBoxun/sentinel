@@ -27,29 +27,39 @@ public enum PacingStep
 /// </para>
 /// <list type="bullet">
 /// <item><description>
-/// <b>要你去处理</b>的（钥匙、欠费）：5 分钟一次。外面的事，催也没用。
-/// </description></item>
-/// <item><description>
-/// <b>你自己的服务没起来</b>、<b>慢到拿不到判定</b>：<b>30 秒一次</b>。这两类最好办
-/// （拉起来、或者换个模型），而它们和"规则等于不存在"是同一件事 —— 界面上却看不出区别。
+/// <b>一律 30 秒一次</b>，不管停在哪一类上。原来钥匙/欠费那类要五分钟才说一次，理由是
+/// "外面的事，催也没用" —— 但真正会碰到的是<b>免费在线模型被限流、被拒绝</b>：
+/// 网好好的、网站打得开、他照样能刷，只是没人判了。五分钟一次起不到"逼他换一个能用的
+/// 模型"的作用，而那个作用正是他要的。
 /// </description></item>
 /// <item><description>
 /// <b>探得比催稀</b>：探测是一次真正的判定请求，会占住那台机器（慢模型上一探就是一分钟）。
-/// "太慢"那一类每 <b>2 分钟</b>探一次就够：它唯一的任务是认出"你换好了"，而探得太勤等于
-/// 一边抱怨它慢、一边接着让它满负荷。
+/// "太慢"那一类每 <b>2 分钟</b>探一次就够；其余几类失败是**瞬间**的（4xx/5xx/连接被拒），
+/// 30 秒探一次几乎不花钱。
 /// </description></item>
 /// </list>
 /// </summary>
 public sealed class ModelAlertPacing
 {
-    /// <summary>要你去处理那类：外面的事，五分钟提一次够了。</summary>
-    public static readonly TimeSpan NeedsAttentionRepeat = TimeSpan.FromMinutes(5);
-
-    /// <summary>「服务没起来」和「慢到拿不到判定」：30 秒一次，见类注释。</summary>
-    public static readonly TimeSpan UrgentRepeat = TimeSpan.FromSeconds(30);
+    /// <summary>
+    /// 多久催一次 —— <b>30 秒</b>，停在哪一类上都一样。
+    ///
+    /// <para>
+    /// 只有一个数，是因为"多快能修好"不是分类的依据：限流、欠费、地址写错、模型太慢，
+    /// 用户在同一个界面里都能换一个服务商解决。而唯一不能立刻解决的是"整台机器没网"，
+    /// 那种情况下提醒里的话会说清楚（连不上），不该因此把提醒放稀。
+    /// </para>
+    /// </summary>
+    public static readonly TimeSpan RepeatEvery = TimeSpan.FromSeconds(30);
 
     /// <summary>
-    /// 连不上那类的探测间隔：30 秒。这一类失败是**瞬间**的（连接被拒），探测几乎不花钱。
+    /// 其余几类的探测间隔：30 秒。
+    ///
+    /// <para>
+    /// 这一类的失败是**瞬间**的（4xx/429/5xx/连接被拒），探测发出去马上就有结果，几乎不花时间。
+    /// 它唯一的代价是"也算一次请求" —— 但停摆期间真判定请求全停了，所以总共也就每分钟两次。
+    /// 值得：用户换掉服务商之后，最多半分钟它就知道不用再吵了。
+    /// </para>
     /// </summary>
     public static readonly TimeSpan CheapProbeEvery = TimeSpan.FromSeconds(30);
 
@@ -68,7 +78,7 @@ public sealed class ModelAlertPacing
     public static readonly TimeSpan SlowProbeEvery = TimeSpan.FromMinutes(2);
 
     /// <summary>
-    /// 多久看一眼状态 —— <b>比 <see cref="UrgentRepeat"/> 细一档</b>。
+    /// 多久看一眼状态 —— <b>比 <see cref="RepeatEvery"/> 细一档</b>。
     ///
     /// <para>
     /// 为什么不留成一个周期一跳：这一跳里可能先跑了一次探测（<b>最长一分钟</b>），而"上次提醒的
@@ -111,9 +121,6 @@ public sealed class ModelAlertPacing
         _shown = null;
         _probed = null;
     }
-
-    public static TimeSpan RepeatFor(ModelTroubleKind kind) =>
-        kind == ModelTroubleKind.NeedsAttention ? NeedsAttentionRepeat : UrgentRepeat;
 
     public static TimeSpan ProbeEveryFor(ModelTroubleKind kind) =>
         kind == ModelTroubleKind.TooSlow ? SlowProbeEvery : CheapProbeEvery;
@@ -161,7 +168,7 @@ public sealed class ModelAlertPacing
             }
         }
 
-        if (Elapsed(_shown) < RepeatFor(kind))
+        if (Elapsed(_shown) < RepeatEvery)
             return PacingStep.Nothing;
 
         _shown = _now();

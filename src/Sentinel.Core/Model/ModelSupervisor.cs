@@ -58,7 +58,7 @@ public interface IModelSupervisor
 /// </para>
 /// <para>
 /// <b>为什么要有退避。</b>没网的时候每份内容都判不出来，而循环每秒跑好几次 —— 不退避就是
-/// 每秒几次往一个连不上的地址发请求。失败之后按类别等一会儿再试。
+/// 每秒几次往一个连不上的地址发请求。失败之后等一会儿再试（同一份内容 30 秒内不重发）。
 /// </para>
 /// </summary>
 public sealed class ModelSupervisor : IModelSupervisor
@@ -89,9 +89,6 @@ public sealed class ModelSupervisor : IModelSupervisor
     /// <summary>判不出来之后多久再试。它可能是临时的，也可能不是。</summary>
     private static readonly TimeSpan RetryAfterNoAnswer = TimeSpan.FromSeconds(30);
 
-    /// <summary>需要用户去处理的问题：在他动手之前，快慢都没意义。</summary>
-    private static readonly TimeSpan RetryAfterAttention = TimeSpan.FromMinutes(5);
-
     private readonly object _gate = new();
     private readonly Dictionary<string, ModelVerdict> _verdicts = new();
     private readonly Dictionary<string, DateTimeOffset> _lastAttempt = new();
@@ -116,7 +113,13 @@ public sealed class ModelSupervisor : IModelSupervisor
     /// <summary>
     /// 需要用户去处理的问题（钥匙不对 / 欠费 / 超额）。null 表示当前没有。
     ///
-    /// 界面按这个决定要不要弹那条每 5 分钟一次的全屏提醒。判定成功一次就清掉。
+    /// 拿不到判定的原因 —— 非 null 表示"模型监督现在等于不存在"。界面按它弹那条每 30 秒一次的
+    /// 全屏提醒（见 <see cref="ModelAlertPacing"/>）；**拿到判定一次就清掉**。
+    ///
+    /// <para>
+    /// 任何"拿不到判定"的失败都会设上它（限流、欠费、5xx、连不上、太慢、本地没起来）——
+    /// 那些看起来是不同的事，后果是一样的：那几条模型规则现在一个人也没在管。
+    /// </para>
     /// </summary>
     public string? BlockingIssue { get; private set; }
 
@@ -246,32 +249,18 @@ public sealed class ModelSupervisor : IModelSupervisor
 
             var trouble = ModelTrouble.Classify(result.Outcome, provider.Endpoint);
 
-            // 没拿到判定：不能算好了。
+            // 没拿到判定：不能算好了。**只有真拿到判定才算好了** —— 服务端 5xx、回来的东西
+            // 看不懂、连不上，都只说明"这次没学到东西"，把它们读成"通了"就等于提醒因为一次
+            // 没有信息的探测停了，而真实判定照样在失败。
             if (result.Outcome != ModelCallOutcome.Answered)
             {
-                // 例外只有一个：**公网**服务连不上。那一类本来就不吵（那时候网站自己也打不开），
-                // 探测认出来了就该照着办 —— 不然"没网"会被当成"还坏着"，提醒一直响。
-                if (result.Outcome == ModelCallOutcome.Unreachable && trouble == ModelTroubleKind.None)
+                lock (_gate)
                 {
-                    lock (_gate)
-                    {
-                        BlockingKind = ModelTroubleKind.None;
-                        BlockingIssue = null;
-                    }
-
-                    return true;
+                    BlockingKind = trouble;
+                    BlockingIssue = result.Message ?? "模型监督现在拿不到判定。";
                 }
 
-                if (trouble != ModelTroubleKind.None)
-                {
-                    lock (_gate)
-                    {
-                        BlockingKind = trouble;
-                        BlockingIssue = result.Message;
-                    }
-                }
-
-                return false;   // 停摆状态原样留着，接着提醒
+                return false;   // 接着提醒
             }
 
             lock (_gate)
@@ -359,11 +348,12 @@ public sealed class ModelSupervisor : IModelSupervisor
 
     public void Request(string ruleId, string instruction, ContentSnapshot snapshot)
     {
-        // **已经知道它坏了（没起来、或者慢到拿不到判定）就不再发新的判定请求。**
+        // **已经知道它坏了（没起来、被限流、或者慢到拿不到判定）就不再发新的判定请求。**
         //
         // 对着一个慢模型，每页都发一次等于让这台机器一直满负荷转，而判定要一分钟以上才回来、
-        // 回来也早没用了。这时候该做的是反复提醒人去换模型，不是接着烧机器。
-        // 恢复靠探测（见 ProbeAsync）：它每分钟问一次"现在通不通、够不够快"。
+        // 回来也早没用了。对着一个限流的服务商，每页都发一次只会让限流更久。
+        // 这时候该做的是反复提醒人去换模型，不是接着烧机器。
+        // 恢复靠探测（见 ProbeAsync）：它每 30 秒到 2 分钟真问一次"现在通不通、够不够快"。
         if (BlockingKind != ModelTroubleKind.None)
             return;
 
@@ -381,15 +371,11 @@ public sealed class ModelSupervisor : IModelSupervisor
             if (RecentForAddress(ruleId, snapshot.Url, now) is not null)
                 return;
 
-            if (_lastAttempt.TryGetValue(key, out var last))
+            if (_lastAttempt.TryGetValue(key, out var last) && now - last < RetryAfterNoAnswer)
             {
-                // 本地没起来、或者模型慢得拿不到判定：都按短退避重试 —— 这两类最好办
-                // （拉起来、或者换个模型），早点试通早点恢复。
-                var wait = BlockingKind is ModelTroubleKind.LocalUnreachable or ModelTroubleKind.TooSlow
-                    ? RetryAfterNoAnswer
-                    : BlockingIssue is null ? RetryAfterNoAnswer : RetryAfterAttention;
-                if (now - last < wait)
-                    return;
+                // 同一份内容刚刚判过又没拿到结果：等一会儿再试。走到这里说明当前没在停摆
+                // （上面那道 return 拦掉了停摆的情况），所以这只是防止同一页被反复重发。
+                return;
             }
 
             _lastAttempt[key] = now;
@@ -427,27 +413,16 @@ public sealed class ModelSupervisor : IModelSupervisor
                         : ModelVerdict.Allowed);
                     break;
 
-                case ModelCallOutcome.NeedsAttention:
-                    BlockingIssue = result.Message;
-                    BlockingKind = ModelTroubleKind.NeedsAttention;
-                    break;
-
-                case ModelCallOutcome.Unreachable:
-                    // 连不上 —— 但**要不要吵取决于那是谁的服务**：本机/内网的没起来
-                    // 是要吵的（网站照样打得开，只是没人判了），公网的按"没网"处理，不吵。
+                default:
+                    // **拿不到判定，一律要吵** —— 限流、欠费、5xx、公网连不上、太慢、本地没起来，
+                    // 全都是同一件事：没人判了。分类只决定提醒里那句话怎么说（见 ModelTrouble），
+                    // 节奏是同一个（见 ModelAlertPacing）。
+                    //
+                    // 原来只吵"本地没起来"和"太慢"两类，另外几类一个不吵、一个五分钟才吵一次 ——
+                    // 而用户真正会碰到的是免费在线模型被限流：网好好的、网站打得开、照样能刷，
+                    // 只是没人判了。那种情况下五分钟一次的提醒起不到任何作用。
                     BlockingKind = ModelTrouble.Classify(result.Outcome, provider.Endpoint);
-                    BlockingIssue = BlockingKind == ModelTroubleKind.None ? null : result.Message;
-                    break;
-
-                case ModelCallOutcome.Timeout:
-                    // 等超时：服务在，只是慢/卡。这也要说 —— 不然那几条规则一样是悄悄失效，
-                    // 而人只会觉得"监控好像不太灵"。话术和节奏在 ModelTrouble 里定。
-                    BlockingKind = ModelTrouble.Classify(result.Outcome, provider.Endpoint);
-                    BlockingIssue = result.Message;
-                    break;
-
-                case ModelCallOutcome.NoAnswer:
-                    // 服务端抽风、回来的东西看不懂：不管，也不提醒。记下判定为空，等退避过去再试。
+                    BlockingIssue = result.Message ?? "模型监督现在拿不到判定。";
                     break;
             }
         }

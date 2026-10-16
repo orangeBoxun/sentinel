@@ -13,10 +13,18 @@ public enum ModelCallOutcome
     Answered,
 
     /// <summary>
-    /// 没拿到：服务端 5xx、或者回来的东西看不懂。
+    /// 没拿到：服务端 5xx、或者回来的东西看不懂（没按要求的格式回）。
     ///
-    /// <b>这一类不管。</b>多半是自己会好的事，等退避过去再试。真正的"连不上"另算
-    /// （见 <see cref="Unreachable"/>）。
+    /// <para>
+    /// 和 <see cref="Unreachable"/> 分开，是因为<b>话不一样</b>（一个说"服务端出错了"，
+    /// 一个说"连不上"）—— 但<b>后果和该做的事是一样的</b>：没人判了，去换一个能用的。
+    /// 所以它一样会提醒（见 <see cref="ModelTrouble"/>）。
+    /// </para>
+    /// <para>
+    /// 原来这一类的说明是"不管，多半是自己会好的事" —— 那是照着公网大厂的服务写的。
+    /// 现实的版本是免费的在线模型：被抢光、被限流、5xx，一整天都"自己好不了"，
+    /// 而用户以为监督还在。
+    /// </para>
     /// </summary>
     NoAnswer,
 
@@ -591,7 +599,7 @@ public sealed class ModelClient
                 new(ModelCallOutcome.NeedsAttention,
                     Message: $"服务端回了 {(int)status}。{detail}"),
 
-            _ => new(ModelCallOutcome.NoAnswer, Message: $"服务端出错了（{(int)status}），等它自己好。{detail}"),
+            _ => new(ModelCallOutcome.NoAnswer, Message: $"服务端出错了（{(int)status}）—— 它现在没在判任何东西。{detail}"),
         };
     }
 

@@ -53,31 +53,39 @@ public class ModelTroubleTests
         Assert.False(ModelTrouble.IsLocal(endpoint), endpoint);
 
     [Fact]
-    public void Local_unreachable_is_the_loud_one()
+    public void 每一类失败都是没人判了()
     {
-        // 本机/内网连不上 → 要吵（网站照样打得开，只是没人判了）
+        // 只有**拿到判定**才算没停，其余每一类都要说 —— 这一条是这个功能的意义所在。
+        Assert.Equal(ModelTroubleKind.None,
+            ModelTrouble.Classify(ModelCallOutcome.Answered, "https://api.deepseek.com/anthropic/v1/messages"));
+
+        // 本机/内网连不上 → 你自己的服务没起来（话最具体：拉起来就行）
         Assert.Equal(ModelTroubleKind.LocalUnreachable,
             ModelTrouble.Classify(ModelCallOutcome.Unreachable, "http://127.0.0.1:11434/v1"));
 
-        // 公网连不上 → 不吵（那时候网站自己也打不开，拦不拦没区别）
-        Assert.Equal(ModelTroubleKind.None,
-            ModelTrouble.Classify(ModelCallOutcome.Unreachable, "https://api.deepseek.com/anthropic/v1/messages"));
-
-        // 钥匙/欠费那类，不管地址在哪都要说
-        Assert.Equal(ModelTroubleKind.NeedsAttention,
-            ModelTrouble.Classify(ModelCallOutcome.NeedsAttention, "https://api.deepseek.com/anthropic/v1/messages"));
-        Assert.Equal(ModelTroubleKind.NeedsAttention,
-            ModelTrouble.Classify(ModelCallOutcome.NeedsAttention, "http://127.0.0.1:11434/v1"));
-
-        // 超时：服务在，但慢到拿不到判定 —— 后果和"没起来"一样（规则等于不存在），
-        // 所以一样地吵；不管地址在哪，要办的事都是"换模型或换服务商"。
+        // 超时：服务在，但慢到拿不到判定。"没起来"和"太慢"的后果一样，吵得也一样。
         Assert.Equal(ModelTroubleKind.TooSlow,
             ModelTrouble.Classify(ModelCallOutcome.Timeout, "http://127.0.0.1:11434/v1"));
         Assert.Equal(ModelTroubleKind.TooSlow,
             ModelTrouble.Classify(ModelCallOutcome.Timeout, "https://api.deepseek.com/anthropic/v1/messages"));
 
-        // 拿到了判定 / 服务端抽风 → 不吵
-        Assert.Equal(ModelTroubleKind.None, ModelTrouble.Classify(ModelCallOutcome.Answered, "http://127.0.0.1:11434/v1"));
-        Assert.Equal(ModelTroubleKind.None, ModelTrouble.Classify(ModelCallOutcome.NoAnswer, "http://127.0.0.1:11434/v1"));
+        // **公网连不上照样要说。** 原来这里判的是"不吵"，理由是"公网连不上多半是自己没网，
+        // 那时候网站自己也打不开"。那条理由对"整台机器断网"成立，对真正会遇到的那件事不成立：
+        // 免费的在线模型被限流、被拒绝、服务端出错 —— 网好好的、网站打得开、他照样能刷，
+        // 只是没人判了。所以要说的不是"是不是你的服务"，而是"还判不判得出来"。
+        Assert.Equal(ModelTroubleKind.NeedsAttention,
+            ModelTrouble.Classify(ModelCallOutcome.Unreachable, "https://api.deepseek.com/anthropic/v1/messages"));
+
+        // 钥匙/欠费/限流：不管地址在哪都要说
+        Assert.Equal(ModelTroubleKind.NeedsAttention,
+            ModelTrouble.Classify(ModelCallOutcome.NeedsAttention, "https://api.deepseek.com/anthropic/v1/messages"));
+        Assert.Equal(ModelTroubleKind.NeedsAttention,
+            ModelTrouble.Classify(ModelCallOutcome.NeedsAttention, "http://127.0.0.1:11434/v1"));
+
+        // 服务端出错了（5xx）、或者回了 200 却读不出判定 —— 它没在判任何东西，一样要说。
+        Assert.Equal(ModelTroubleKind.NeedsAttention,
+            ModelTrouble.Classify(ModelCallOutcome.NoAnswer, "https://api.deepseek.com/anthropic/v1/messages"));
+        Assert.Equal(ModelTroubleKind.NeedsAttention,
+            ModelTrouble.Classify(ModelCallOutcome.NoAnswer, "http://127.0.0.1:11434/v1"));
     }
 }

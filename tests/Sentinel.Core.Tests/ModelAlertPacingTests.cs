@@ -77,7 +77,7 @@ public sealed class ModelAlertPacingTests
     public void 检查要比要催的节奏勤_不然每两跳才弹一次()
     {
         // 判据和节奏相等，就是那个"实际只有一半"的坑。这一条把它钉住。
-        Assert.True(ModelAlertPacing.CheckEvery < ModelAlertPacing.UrgentRepeat);
+        Assert.True(ModelAlertPacing.CheckEvery < ModelAlertPacing.RepeatEvery);
     }
 
     [Fact]
@@ -87,7 +87,7 @@ public sealed class ModelAlertPacingTests
             pacing => pacing.StepAsync(ModelTroubleKind.TooSlow, () => Task.FromResult(false)));
 
         // 立刻一次，然后每 30 秒一次：二十分钟一共 40 次。探测那几次一次都不占掉提醒。
-        AssertCadence(alerts, ModelAlertPacing.UrgentRepeat, 40);
+        AssertCadence(alerts, ModelAlertPacing.RepeatEvery, 40);
     }
 
     [Fact]
@@ -96,17 +96,19 @@ public sealed class ModelAlertPacingTests
         var alerts = await RunAsync(TimeSpan.FromMinutes(10),
             pacing => pacing.StepAsync(ModelTroubleKind.LocalUnreachable, () => Task.FromResult(false)));
 
-        AssertCadence(alerts, ModelAlertPacing.UrgentRepeat, 20);
+        AssertCadence(alerts, ModelAlertPacing.RepeatEvery, 20);
     }
 
     [Fact]
-    public async Task 要你去处理那类_五分钟催一次()
+    public async Task 服务商不给你用_同样每三十秒催一次()
     {
-        // 钥匙不对、欠费这类是外面的事，催也没用 —— 但必须说，不然模型监督已经停了而你不知道。
+        // 限流、额度抢光、5xx、公网连不上 —— 这一类原来五分钟才说一次，理由是"外面的事，
+        // 催也没用"。但网好好的、网站打得开、他照样能刷，只是没人判了；五分钟一次
+        // 起不到"逼他换个能用的模型"的作用，而那正是这个功能的意义。
         var alerts = await RunAsync(TimeSpan.FromMinutes(20),
             pacing => pacing.StepAsync(ModelTroubleKind.NeedsAttention, () => Task.FromResult(false)));
 
-        AssertCadence(alerts, ModelAlertPacing.NeedsAttentionRepeat, 4);
+        AssertCadence(alerts, ModelAlertPacing.RepeatEvery, 40);
     }
 
     [Fact]
@@ -125,11 +127,11 @@ public sealed class ModelAlertPacingTests
         Assert.True(pacing.ProbeInFlight);
 
         // 探测还没回来，定时器照样每 5 秒跳一次 —— 到 30 秒就该弹第一次
-        clock.Advance(ModelAlertPacing.UrgentRepeat);
+        clock.Advance(ModelAlertPacing.RepeatEvery);
         Assert.Equal(PacingStep.Alert,
             await pacing.StepAsync(ModelTroubleKind.TooSlow, () => gate.Task));
 
-        clock.Advance(ModelAlertPacing.UrgentRepeat);
+        clock.Advance(ModelAlertPacing.RepeatEvery);
         Assert.Equal(PacingStep.Alert,
             await pacing.StepAsync(ModelTroubleKind.TooSlow, () => gate.Task));
 
