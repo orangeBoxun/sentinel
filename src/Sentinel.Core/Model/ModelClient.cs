@@ -73,8 +73,15 @@ public sealed record ModelListResult(bool Ok, IReadOnlyList<string> Models, stri
 /// </summary>
 public sealed class ModelClient
 {
-    /// <summary>发给模型的正文上限。再长的页面也很少需要更多，而 token 是要花钱的。</summary>
-    private const int MaxContentChars = 2000;
+    /// <summary>
+    /// 发给模型的正文上限。再长的页面也很少需要更多，而 token 是要花钱的。
+    ///
+    /// <para>
+    /// 公开出来是给<b>探测</b>用的：探测要能和一次真实判定比快慢，就必须是同样的量级 ——
+    /// 正文得填到这个数（见 <see cref="ModelSupervisor.ProbeAsync"/>）。
+    /// </para>
+    /// </summary>
+    public const int MaxContentChars = 2000;
 
     private readonly HttpClient _http;
 
@@ -203,6 +210,11 @@ public sealed class ModelClient
     /// 只重试一次，不更多：一次判定最多等 60 秒，反复重试会把"慢"变成"卡"。真正的服务端故障
     /// （连不上、一直超时）重试一次也救不回来，那种情况该老实报错。
     /// </para>
+    /// <para>
+    /// <b>超时不重试。</b>重试是为握手抖动准备的（见上），而超时的意思是"对面就是慢" ——
+    /// 再等一个 60 秒既救不回来，又让那台机器多烧一分钟（本机跑大模型尤其明显），
+    /// 还把那句"太慢"往后推了一分钟才说得出口。
+    /// </para>
     /// </summary>
     private async Task<HttpResponseMessage> SendWithRetryAsync(
         Func<HttpRequestMessage> build, CancellationToken token)
@@ -218,7 +230,7 @@ public sealed class ModelClient
             {
                 throw;
             }
-            catch (Exception) when (attempt < Attempts)
+            catch (Exception ex) when (attempt < Attempts && !LooksLikeTimeout(ex))
             {
                 await Task.Delay(RetryDelay, token).ConfigureAwait(false);
             }

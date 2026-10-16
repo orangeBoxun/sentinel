@@ -348,6 +348,150 @@ public class ModelTests
         await WaitUntil(() => handler.Attempts > afterFirst);
     }
 
+    [Fact]
+    public async Task 慢模型不会被重试一次_那只是白等()
+    {
+        // 重试是为握手抖动准备的（见上面那条）。超时的意思是"对面就是慢" —— 再等一个 60 秒
+        // 既救不回来，又让那台机器多烧一分钟，还把那句"太慢"往后推了一分钟才说得出口。
+        var handler = new SlowHandler();
+        var client = new ModelClient(new HttpClient(handler) { Timeout = TimeSpan.FromMilliseconds(200) });
+
+        var result = await client.JudgeAsync(Provider(ApiFormat.OpenAi), "x", Snapshot(), default);
+
+        Assert.Equal(ModelCallOutcome.Timeout, result.Outcome);
+        Assert.Equal(1, handler.Attempts);
+    }
+
+    [Fact]
+    public async Task 探测问的是和真实判定同一个问题()
+    {
+        // 这一条是"提醒能不能保住"的根，踩过一次：探测原来问的是"这是一次连通性探测。照常回答即可。"
+        // ——一句话，模型没什么可想，正文还是同一句话重复 300 遍。于是一个**网页要两分钟**的慢模型，
+        // 探测十几秒就答上来了，探测就说"通了"，停摆状态被清掉、提醒全停 —— 而真实判定照样次次超时。
+        // 用户看到的正是"提醒一阵一阵的，远远没有 30 秒一次"。
+        //
+        // 所以探测必须和真实判定同量级：**同一道禁令**（思考型模型主要的时间花在它身上）、
+        // **同样大小的正文**（要有真实页面的量，不能是最好压缩的重复句）。
+        var provider = Provider(ApiFormat.OpenAi);
+        provider.Endpoint = "http://127.0.0.1:11434/v1/chat/completions";
+
+        var config = new AppConfig();
+        config.Models.Add(provider);
+        config.ActiveModelId = provider.Id;
+        config.Targets.Add(TargetWithModelRule());
+
+        var handler = new SwitchHandler { Fail = true };
+        var supervisor = new ModelSupervisor(
+            () => config,
+            new ModelClient(new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(10) }));
+
+        supervisor.Request("r", "禁止看与工作无关的短视频", Snapshot());
+        await WaitUntil(() => supervisor.BlockingIssue is not null);
+
+        handler.Fail = false;
+        Assert.True(await supervisor.ProbeAsync());
+
+        var sent = handler.Bodies[^1];   // 最后发出去的那一份，就是探测
+
+        // 一、禁令在里面 —— 探测不带它，量出来的快慢就不作数
+        Assert.Contains("禁止看与工作无关的短视频", sent);
+
+        // 二、正文是满的。探测只发一句"在吗"的话，慢模型也会秒回。
+        Assert.True(sent.Length > ModelClient.MaxContentChars,
+            $"探测的正文没填满（整个请求体才 {sent.Length} 字）—— 它测出来的快慢不作数");
+
+        // 三、那句"照常回答即可"的探测指令不能再回来：它就是让探测变便宜的原因。
+        Assert.DoesNotContain("连通性探测", sent);
+    }
+
+    [Fact]
+    public async Task 探测吃到服务端错误不算好了()
+    {
+        // 提醒只能因为**监督真的在跑**而停。5xx 只说明"这次没学到东西"（服务端的事，等它自己好），
+        // 把它读成"通了"就等于提醒因为一次没学到东西的探测停了 —— 而真实判定照样在超时。
+        var provider = Provider(ApiFormat.OpenAi);
+        provider.Endpoint = "http://127.0.0.1:11434/v1/chat/completions";
+
+        var config = new AppConfig();
+        config.Models.Add(provider);
+        config.ActiveModelId = provider.Id;
+
+        var handler = new BreakThenErrorHandler();
+        var supervisor = new ModelSupervisor(
+            () => config,
+            new ModelClient(new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(10) }));
+
+        supervisor.Request("r", "禁令", Snapshot());
+        await WaitUntil(() => supervisor.BlockingIssue is not null);
+        Assert.Equal(ModelTroubleKind.LocalUnreachable, supervisor.BlockingKind);
+
+        handler.Broken = false;   // 服务起来了，但这次它回 500
+
+        Assert.False(await supervisor.ProbeAsync());
+        Assert.NotNull(supervisor.BlockingIssue);
+        Assert.Equal(ModelTroubleKind.LocalUnreachable, supervisor.BlockingKind);
+    }
+
+    [Fact]
+    public async Task 公网服务变成连不上_探测认出没网就不吵了()
+    {
+        // 反过来那条也要对：公网服务连不上本来就**不吵**（那时候网站自己也打不开，拦不拦没区别）。
+        // 探测认出来了就该照着办，不然"没网"会被当成"还坏着"，提醒一直响。
+        var provider = Provider(ApiFormat.OpenAi);   // 公网地址
+
+        var config = new AppConfig();
+        config.Models.Add(provider);
+        config.ActiveModelId = provider.Id;
+
+        var handler = new HangThenRefuseHandler();
+        var supervisor = new ModelSupervisor(
+            () => config,
+            new ModelClient(new HttpClient(handler) { Timeout = TimeSpan.FromMilliseconds(300) }));
+
+        supervisor.Request("r", "禁令", Snapshot());
+        await WaitUntil(() => supervisor.BlockingKind == ModelTroubleKind.TooSlow);
+
+        handler.Refuse = true;
+
+        Assert.True(await supervisor.ProbeAsync());
+        Assert.Null(supervisor.BlockingIssue);
+        Assert.Equal(ModelTroubleKind.None, supervisor.BlockingKind);
+    }
+
+    /// <summary>先把连接弄断（做出停摆状态），然后改回"服务在，但它回 500"。</summary>
+    private sealed class BreakThenErrorHandler : HttpMessageHandler
+    {
+        public bool Broken { get; set; } = true;
+
+        protected override Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            if (Broken)
+                throw new HttpRequestException("目标计算机积极拒绝，无法连接。");
+
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.InternalServerError)
+            {
+                Content = new StringContent("{}"),
+            });
+        }
+    }
+
+    /// <summary>先一直拖到超时（做出"太慢"），然后改成"主机名解析不了"。</summary>
+    private sealed class HangThenRefuseHandler : HttpMessageHandler
+    {
+        public bool Refuse { get; set; }
+
+        protected override async Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            if (Refuse)
+                throw new HttpRequestException("No such host is known.");
+
+            await Task.Delay(TimeSpan.FromSeconds(10), cancellationToken);
+            return new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent("{}") };
+        }
+    }
+
     private static async Task WaitUntil(Func<bool> condition)
     {
         for (var i = 0; i < 60 && !condition(); i++)
@@ -359,9 +503,12 @@ public class ModelTests
     /// <summary>一直拖到超时为止。</summary>
     private sealed class SlowHandler : HttpMessageHandler
     {
+        public int Attempts { get; private set; }
+
         protected override async Task<HttpResponseMessage> SendAsync(
             HttpRequestMessage request, CancellationToken cancellationToken)
         {
+            Attempts++;
             await Task.Delay(TimeSpan.FromSeconds(10), cancellationToken);
             return new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent("{}") };
         }
@@ -374,18 +521,24 @@ public class ModelTests
 
         public int Attempts { get; private set; }
 
-        protected override Task<HttpResponseMessage> SendAsync(
+        /// <summary>发出去的每一份请求体。用来验"探测问的到底是什么问题"。</summary>
+        public List<string> Bodies { get; } = new();
+
+        protected override async Task<HttpResponseMessage> SendAsync(
             HttpRequestMessage request, CancellationToken cancellationToken)
         {
             Attempts++;
 
+            if (request.Content is not null)
+                Bodies.Add(await request.Content.ReadAsStringAsync(cancellationToken));
+
             if (Fail)
                 throw new HttpRequestException("目标计算机积极拒绝，无法连接。");
 
-            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            return new HttpResponseMessage(HttpStatusCode.OK)
             {
                 Content = new StringContent("""{"choices":[{"message":{"content":"[false, \"没问题\"]"}}]}"""),
-            });
+            };
         }
     }
 

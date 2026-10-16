@@ -216,6 +216,17 @@ public sealed class ModelSupervisor : IModelSupervisor
     /// <para>
     /// 只在**已经处于停摆**时才发请求（见开头那句 return）：正常运行时它一次都不发，不花钱。
     /// </para>
+    /// <para>
+    /// <b>它不便宜。</b>它发的是一次和真实判定同样大小的请求（真实禁令 + 满额正文），慢模型上
+    /// 要跑一分钟才超时 —— 所以"多久探一次"是件要拿捏的事，在
+    /// <see cref="ModelAlertPacing.SlowProbeEvery"/> 那边定的。
+    /// </para>
+    /// <para>
+    /// <b>只有真拿到判定才算"好了"</b>（见下面那个 if）。这一条踩过：原来凡是<b>分类不出毛病</b>
+    /// 的结果都算好了，于是服务端 5xx、或者模型回的格式看不懂（<c>NoAnswer</c>）也被读成"通了"，
+    /// 状态一清、提醒全停 —— 而那两次探测什么也没证明。提醒只能因为<b>监督真的在跑</b>而停，
+    /// 不能因为一次没学到东西的探测而停。
+    /// </para>
     /// </summary>
     public async Task<bool> ProbeAsync()
     {
@@ -230,18 +241,47 @@ public sealed class ModelSupervisor : IModelSupervisor
         try
         {
             var result = await _client
-                .JudgeAsync(provider, ProbeInstruction, ProbeSnapshot(), CancellationToken.None)
+                .JudgeAsync(provider, ProbeInstruction(), ProbeSnapshot(), CancellationToken.None)
                 .ConfigureAwait(false);
 
-            var kind = ModelTrouble.Classify(result.Outcome, provider.Endpoint);
+            var trouble = ModelTrouble.Classify(result.Outcome, provider.Endpoint);
+
+            // 没拿到判定：不能算好了。
+            if (result.Outcome != ModelCallOutcome.Answered)
+            {
+                // 例外只有一个：**公网**服务连不上。那一类本来就不吵（那时候网站自己也打不开），
+                // 探测认出来了就该照着办 —— 不然"没网"会被当成"还坏着"，提醒一直响。
+                if (result.Outcome == ModelCallOutcome.Unreachable && trouble == ModelTroubleKind.None)
+                {
+                    lock (_gate)
+                    {
+                        BlockingKind = ModelTroubleKind.None;
+                        BlockingIssue = null;
+                    }
+
+                    return true;
+                }
+
+                if (trouble != ModelTroubleKind.None)
+                {
+                    lock (_gate)
+                    {
+                        BlockingKind = trouble;
+                        BlockingIssue = result.Message;
+                    }
+                }
+
+                return false;   // 停摆状态原样留着，接着提醒
+            }
 
             lock (_gate)
             {
-                BlockingKind = kind;
-                BlockingIssue = kind == ModelTroubleKind.None ? null : result.Message;
+                BlockingKind = ModelTroubleKind.None;
+                BlockingIssue = null;
+                LastAnswered = DateTimeOffset.Now;
             }
 
-            return BlockingKind == ModelTroubleKind.None;
+            return true;
         }
         catch
         {
@@ -249,21 +289,73 @@ public sealed class ModelSupervisor : IModelSupervisor
         }
     }
 
-    /// <summary>探测用的那句话：越短越好，它唯一的任务是"走通一次"。</summary>
-    private const string ProbeInstruction = "这是一次连通性探测。照常回答即可。";
-
     /// <summary>
-    /// 探测用的一份内容 —— **和真实页面一样大**。
+    /// 探测要问的<b>就是真实判定会问的那句话</b> —— 当前启用的那条模型规则写给自己看的禁令。
     ///
     /// <para>
-    /// 关键在这里：探测如果只发一句"在吗"，慢模型也会秒回，于是刚记下的"太慢"立刻被自己抹掉，
-    /// 提醒一阵一阵的，人根本不知道该干什么。带上四千字的正文，探测才和真实判定同量级 ——
-    /// 慢模型照样过不了，换快了才通得过。
+    /// 这一条是"探测算不算数"的关键，而且踩过一次：原来探测问的是"这是一次连通性探测。照常回答即可。"
+    /// —— 一句话，模型没什么可想。于是一个**网页要两分钟**的慢模型，探测却答得上来，探测就说
+    /// "通了"，停摆状态被清掉、提醒全停 —— 而真实判定照样次次超时。用户看到的是"提醒一阵一阵的，
+    /// 远远没有 30 秒一次"，根因在这里：<b>探测量的是另一个问题，比真实判定便宜得多</b>。
+    /// </para>
+    /// <para>
+    /// 禁令之所以是主要的成本项：它是人写给自己的规矩，可能很长、很绕，思考型模型在它上面花的
+    /// 推理时间远多于在一句"照常回答即可"上。所以探测必须带上它，否则测出来的快慢不作数。
     /// </para>
     /// </summary>
-    private static ContentSnapshot ProbeSnapshot() =>
-        new("(探测)", "(探测)", string.Concat(Enumerable.Repeat("这是一段用来测量判定耗时的正文。", 300)),
-            DateTimeOffset.Now);
+    private string ProbeInstruction()
+    {
+        foreach (var rule in _config().Targets.SelectMany(t => t.Rules))
+        {
+            // 和 RuleEngine 里发出去的那句是同一个来源：规则的 Patterns 就是"要禁止自己看什么"。
+            if (rule.Enabled && rule.Match.Type == MatchKind.Model && rule.Match.Patterns.Count > 0)
+                return string.Join("\n", rule.Match.Patterns);
+        }
+
+        // 一条模型规则都没有（比如界面上单独点"测试连接"）时，用一句普通的禁令顶上。
+        return "禁止浏览与工作无关的娱乐内容。";
+    }
+
+    /// <summary>
+    /// 探测用的一份内容 —— **和真实页面一样大，而且不是一句话重复 300 遍**。
+    ///
+    /// <para>
+    /// 大小要对上：探测如果只发一句"在吗"，慢模型也会秒回，于是刚记下的"太慢"立刻被自己抹掉，
+    /// 提醒一阵一阵的，人根本不知道该干什么。所以正文填到客户端真正会发出去的那个上限
+    /// （<see cref="ModelClient.MaxContentChars"/>），这样"探测答得上来"就意味着"真实判定也答得上来"。
+    /// </para>
+    /// <para>
+    /// 内容要换着写：一页重复的同一句话是最好压缩的输入，测出来的耗时比真实页面乐观。这里是一段
+    /// 平平常常、说不上违规的页面文字（探测只看耗时不看结论），量出来的就是一个<b>普通</b>页面的代价
+    /// —— 比最重的那一页乐观一点，这个代价认了：探测本身也会变成每两分钟一次的负担。
+    /// </para>
+    /// </summary>
+    private static ContentSnapshot ProbeSnapshot()
+    {
+        var body = new StringBuilder();
+
+        for (var i = 0; body.Length < ModelClient.MaxContentChars; i++)
+            body.Append(ProbeLines[i % ProbeLines.Length]).Append(' ');
+
+        return new ContentSnapshot("(探测)", "(探测)", body.ToString(), DateTimeOffset.Now);
+    }
+
+    /// <summary>探测正文用的句子。多写几句、错着用，别让整段变成"同一句话重复 N 遍"。</summary>
+    private static readonly string[] ProbeLines =
+    {
+        "周五的例会挪到了下午三点，会议室换到二层东侧那间。",
+        "服务器昨晚重启过一次，日志里留下七条告警，都是磁盘写入变慢。",
+        "新的版本号是 3.14，升级文档里提到两个不兼容的改动。",
+        "这张表统计了上个月的访问量，排在第一的仍然是文档首页。",
+        "请把这段配置复制到另一台机器上，注意路径里的反斜杠要转义。",
+        "有人反馈说搜索框在输入法打开的时候会丢字，暂时没能复现。",
+        "索引重建之后，这条查询从两秒降到了三十毫秒，效果比预想的好。",
+        "会议记录里还有三条待办没有分配负责人，明天再问一次。",
+        "这段代码把同一个列表复制了三遍，改成一次遍历就够，但先别动它。",
+        "天气预报说晚上有雨，记得把阳台上的东西收进来。",
+        "缓存命中率这周掉到了七成，原因是有一批请求每次都带着随机参数。",
+        "把这个文件另存一份，改完之后再和原来的对比一次。",
+    };
 
     public void Request(string ruleId, string instruction, ContentSnapshot snapshot)
     {
