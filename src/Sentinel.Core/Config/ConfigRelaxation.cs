@@ -254,10 +254,10 @@ public static class ConfigRelaxation
                     whys.Add($"{ruleLabel}的生效时间从「{older.ScheduleId ?? "始终生效"}」改成「{rule.ScheduleId ?? "始终生效"}」");
 
                 if (Widens(c => RuleOf(c, id, ruleId).Pause.Enabled = rule.Pause.Enabled)
-                    || Widens(c => RuleOf(c, id, ruleId).Pause.EveryDays = rule.Pause.EveryDays)
+                    || Widens(c => RuleOf(c, id, ruleId).Pause.TimesPerDay = rule.Pause.TimesPerDay)
                     || Widens(c => RuleOf(c, id, ruleId).Pause.Minutes = rule.Pause.Minutes))
                 {
-                    whys.Add($"{ruleLabel}的暂停设置放宽了（现在是每 {rule.Pause.EveryDays} 天可以停 {rule.Pause.Minutes} 分钟）");
+                    whys.Add($"{ruleLabel}的暂停设置放宽了（现在是每天最多 {rule.Pause.TimesPerDay} 次、每次 {rule.Pause.Minutes} 分钟）");
                 }
             }
         }
@@ -404,8 +404,9 @@ public static class ConfigRelaxation
 
         fold.Flag(before.Enabled, after.Enabled, restrictiveWhenTrue: false);
 
-        if (before.EveryDays != after.EveryDays)
-            fold.Note(after.EveryDays < before.EveryDays ? ChangeDirection.Relaxing : ChangeDirection.Tightening);
+        // 次数给得更多是放宽，给得更少是收紧 —— 和"间隔天数"读的方向正好相反。
+        if (before.TimesPerDay != after.TimesPerDay)
+            fold.Note(after.TimesPerDay > before.TimesPerDay ? ChangeDirection.Relaxing : ChangeDirection.Tightening);
 
         if (before.Minutes != after.Minutes)
             fold.Note(after.Minutes > before.Minutes ? ChangeDirection.Relaxing : ChangeDirection.Tightening);

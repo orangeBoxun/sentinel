@@ -29,7 +29,7 @@ public class ConfigStoreTests
                         Id = "r",
                         PolicyId = "p",
                         Match = new MatchSpec { Type = MatchKind.Regex, Fields = { MatchField.Url } },
-                        Pause = new PauseOptions { Enabled = true, EveryDays = 2, Minutes = 15 },
+                        Pause = new PauseOptions { Enabled = true, TimesPerDay = 2, Minutes = 15 },
                     },
                 },
             });
@@ -50,7 +50,7 @@ public class ConfigStoreTests
             Assert.Equal([ActionType.Notify, ActionType.Close], sent.Policies[0].Actions);
 
             Assert.True(sent.Targets[0].Rules[0].Pause.Enabled);
-            Assert.Equal(2, sent.Targets[0].Rules[0].Pause.EveryDays);
+            Assert.Equal(2, sent.Targets[0].Rules[0].Pause.TimesPerDay);
             Assert.Equal(15, sent.Targets[0].Rules[0].Pause.Minutes);
         }
         finally

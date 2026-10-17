@@ -393,7 +393,7 @@ public partial class MainWindow : Window
         (RulePolicyBox.SelectedItem as Choice<string?>)?.Value,
         (RuleScheduleBox.SelectedItem as Choice<string?>)?.Value,
         RulePriorityBox.Text, RuleReminderBox.Text,
-        RulePauseEnabledCheck.IsChecked, RulePauseDaysBox.Text, RulePauseMinutesBox.Text);
+        RulePauseEnabledCheck.IsChecked, RulePauseTimesBox.Text, RulePauseMinutesBox.Text);
 
     private string PolicySignature() => string.Join('\u001f',
         PolicyNameBox.Text,
@@ -1047,13 +1047,22 @@ public partial class MainWindow : Window
             lines.Add($"「{rule.Name}」还没允许暂停 —— 在下面「暂停」一节里勾上「允许暂停这条规则」，再点「应用修改」。"
                     + "开这个开关算放宽（保护开着的时候要令牌），但开好之后，暂停本身不需要令牌。");
         }
-        else if (pauses.AvailableAt(rule.Id, options) is { } available && available > DateTimeOffset.Now)
-        {
-            lines.Add($"「{rule.Name}」下一次暂停要等到 {available:MM-dd HH:mm}（每 {options.EveryDays} 天一次）。");
-        }
         else
         {
-            lines.Add($"「{rule.Name}」现在可以暂停 {options.Minutes} 分钟（每 {options.EveryDays} 天一次）。");
+            var now = DateTimeOffset.Now;
+
+            if (pauses.AvailableAt(rule.Id, options, now) is { } available)
+            {
+                // 两种"还不能停"：这一轮还没走完，或者今天的次数已经用光。
+                lines.Add(pauses.IsPaused(rule.Id, options, now)
+                    ? $"「{rule.Name}」正在暂停中 —— 这一轮到 {available:HH:mm} 结束（每天最多 {options.TimesPerDay} 次）。"
+                    : $"「{rule.Name}」今天的 {options.TimesPerDay} 次已经用完了 —— 明天零点之后可以再停。");
+            }
+            else
+            {
+                lines.Add($"「{rule.Name}」现在可以暂停 {options.Minutes} 分钟"
+                        + $"（每天最多 {options.TimesPerDay} 次，今天还剩 {pauses.LeftToday(rule.Id, options, now)} 次）。");
+            }
         }
 
         if (extra is not null)
@@ -1518,7 +1527,7 @@ public partial class MainWindow : Window
         RuleEnabledCheck.IsChecked = _selectedRule.Enabled;
 
         RulePauseEnabledCheck.IsChecked = _selectedRule.Pause.Enabled;
-        RulePauseDaysBox.Text = _selectedRule.Pause.EveryDays.ToString();
+        RulePauseTimesBox.Text = _selectedRule.Pause.TimesPerDay.ToString();
         RulePauseMinutesBox.Text = _selectedRule.Pause.Minutes.ToString();
 
         RefreshPolicyChoices();
@@ -1662,7 +1671,7 @@ public partial class MainWindow : Window
         // Through the same path as every other edit, so loosening any of these three asks for the
         // token, while tightening them — fewer, shorter, or off — is free.
         _selectedRule.Pause.Enabled = RulePauseEnabledCheck.IsChecked == true;
-        _selectedRule.Pause.EveryDays = ParseInt(RulePauseDaysBox.Text, _selectedRule.Pause.EveryDays, 1, 365);
+        _selectedRule.Pause.TimesPerDay = ParseInt(RulePauseTimesBox.Text, _selectedRule.Pause.TimesPerDay, 1, 48);
         _selectedRule.Pause.Minutes = ParseInt(RulePauseMinutesBox.Text, _selectedRule.Pause.Minutes, 1, 24 * 60);
 
         if (isNew && _selectedTarget is not null && !_selectedTarget.Rules.Contains(_selectedRule))

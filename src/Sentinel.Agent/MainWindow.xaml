@@ -396,13 +396,13 @@
                                 <Grid Margin="0,18,0,0"><Border Style="{StaticResource Card}">
                                     <StackPanel>
                                         <TextBlock Style="{StaticResource H2}" Text="暂停" />
-                                        <TextBlock Style="{StaticResource Hint}" Margin="0,7,0,0" Text="不需要解锁就能把这条规则停一会儿，每 N 天一次。想把这里调松（开启、更频繁、更长），跟其他放宽一样要令牌 —— 额度按规则分开算，花在哪一条上是你说得清楚的。" />
+                                        <TextBlock Style="{StaticResource Hint}" Margin="0,7,0,0" Text="不需要解锁就能把这条规则停一会儿，每天有几次。想把这里调松（开启、次数更多、每次更长），跟其他放宽一样要令牌 —— 额度按规则分开算，花在哪一条上是你说得清楚的。按本机日历日计数，过零点重新算。" />
 
                                         <CheckBox x:Name="RulePauseEnabledCheck" Content="允许暂停这条规则" Margin="0,14,0,0" />
                                         <WrapPanel Margin="0,10,0,0">
-                                            <TextBlock Text="每" VerticalAlignment="Center" Foreground="{StaticResource TextSecondary}" />
-                                            <TextBox x:Name="RulePauseDaysBox" Style="{StaticResource NumericBox}" Margin="8,0,6,0" />
-                                            <TextBlock Text="天可以暂停一次，每次" VerticalAlignment="Center" Foreground="{StaticResource TextSecondary}" />
+                                            <TextBlock Text="每天最多" VerticalAlignment="Center" Foreground="{StaticResource TextSecondary}" />
+                                            <TextBox x:Name="RulePauseTimesBox" Style="{StaticResource NumericBox}" Margin="8,0,6,0" />
+                                            <TextBlock Text="次，每次" VerticalAlignment="Center" Foreground="{StaticResource TextSecondary}" />
                                             <TextBox x:Name="RulePauseMinutesBox" Style="{StaticResource NumericBox}" Margin="8,0,6,0" />
                                             <TextBlock Text="分钟" VerticalAlignment="Center" Foreground="{StaticResource TextSecondary}" />
                                         </WrapPanel>

@@ -161,7 +161,7 @@ public class MonitorLoopTests
         {
             var now = DateTimeOffset.Now;
             var rule = config.Targets[0].Rules[0];
-            rule.Pause = new PauseOptions { Enabled = true, EveryDays = 1, Minutes = 10 };
+            rule.Pause = new PauseOptions { Enabled = true, TimesPerDay = 1, Minutes = 10 };
 
             var state = PauseState.Load(configPath);
             state.Record(rule.Id, now);

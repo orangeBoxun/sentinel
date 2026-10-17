@@ -176,8 +176,8 @@ public static class ConfigValidator
                     else if (rule.Pause.Minutes > 24 * 60)
                         issues.Add(Error(ruleWhere, "暂停时长不能超过 24 小时"));
 
-                    if (rule.Pause.EveryDays < 1)
-                        issues.Add(Error(ruleWhere, "暂停间隔至少是 1 天"));
+                    if (rule.Pause.TimesPerDay < 1)
+                        issues.Add(Error(ruleWhere, "每天的暂停次数至少是 1 次"));
                 }
 
                 // A whitelist rule allows, so it needs no policy; everything else must name one.

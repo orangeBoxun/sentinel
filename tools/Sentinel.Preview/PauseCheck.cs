@@ -195,7 +195,7 @@ internal static class PauseCheck
                     Name = "暂停测试规则",
                     PolicyId = "p1",
                     // 额度开好，正是"保护锁上之前应该做的那一步"。
-                    Pause = new PauseOptions { Enabled = true, EveryDays = 1, Minutes = 10 },
+                    Pause = new PauseOptions { Enabled = true, TimesPerDay = 2, Minutes = 10 },
                     Match = new MatchSpec
                     {
                         Type = MatchKind.Keyword,

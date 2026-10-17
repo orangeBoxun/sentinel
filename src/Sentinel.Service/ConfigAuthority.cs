@@ -305,8 +305,15 @@ public sealed class ConfigAuthority
 
         if (!state.CanPause(ruleId, options, now))
         {
-            var next = state.AvailableAt(ruleId, options)!.Value;
-            error = $"「{rule.Name}」下一次暂停要等到 {next:MM-dd HH:mm} —— 每 {options.EveryDays} 天一次。";
+            var next = state.AvailableAt(ruleId, options, now) ?? now;
+
+            var why = state.IsPaused(ruleId, options, now)
+                ? "这一轮暂停还没结束"
+                : $"今天的机会已经用掉了 {options.TimesPerDay} 次";
+
+            error = $"「{rule.Name}」现在停不了 —— {why}，要等到 {next:MM-dd HH:mm}"
+                    + $"（每天最多 {options.TimesPerDay} 次）。";
+
             return false;
         }
 
@@ -315,8 +322,9 @@ public sealed class ConfigAuthority
 
         reply = Ipc.Serialize(new PauseReply(
             now.AddMinutes(options.Minutes).ToString("O"),
-            now.AddDays(options.EveryDays).ToString("O"),
-            options.Minutes));
+            (state.AvailableAt(ruleId, options, now) ?? now).ToString("O"),
+            options.Minutes,
+            state.LeftToday(ruleId, options, now)));
 
         return true;
     }

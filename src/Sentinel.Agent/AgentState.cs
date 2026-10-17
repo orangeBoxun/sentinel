@@ -331,9 +331,11 @@ public sealed class AgentState : IDisposable
         Monitor.ForgetRule(ruleId);
 
         var until = DateTimeOffset.Parse(reply!.Until);
-        var next = DateTimeOffset.Parse(reply.NextAvailableAt);
 
-        message = $"已暂停到 {until:HH:mm} —— 下一次要等到 {next:MM-dd HH:mm}。";
+        message = reply.LeftToday > 0
+            ? $"已暂停到 {until:HH:mm} —— 今天还能停 {reply.LeftToday} 次。"
+            : $"已暂停到 {until:HH:mm} —— 今天的次数用完了，明天零点之后可以再停。";
+
         return true;
     }
 
