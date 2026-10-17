@@ -329,7 +329,7 @@ public sealed class MonitorLoop
                 if (rule.Id != ruleId)
                     continue;
 
-                return rule.Pause.Enabled && pauses.IsPaused(rule.Id, rule.Pause, now);
+                return rule.Pause.Enabled && pauses.IsPaused(rule.Id, now);
             }
         }
 

@@ -6,13 +6,19 @@ using Xunit;
 
 namespace Sentinel.Core.Tests;
 
+/// <summary>
+/// 暂停额度：工作日/周末两套、周期（每天/每周/每月）、期号重置。
+///
+/// <para>
+/// 这一块是"自我约束的工具里唯一不需要令牌的口子"，所以每一处边界都值得钉住：
+/// 额度和暂停本身是两件事（正在暂停时再点一次不该花掉下一次），两套额度互不影响
+/// （周一的严格不该吃掉周六的宽松），跨零点不换套（周五 23:50 停的那一轮还是工作日的）。
+/// </para>
+/// </summary>
 public class PauseTests : IDisposable
 {
     private readonly string _config =
         Path.Combine(Path.GetTempPath(), "sentinel-pause-" + Guid.NewGuid().ToString("N"), "config.json");
-
-    /// <summary>2026-10-17 上午九点（本机 +08:00）。用固定日期，免得测试跟着当天日期漂。</summary>
-    private static DateTimeOffset Morning => new(2026, 10, 17, 9, 0, 0, TimeSpan.FromHours(8));
 
     public PauseTests() => Directory.CreateDirectory(Path.GetDirectoryName(_config)!);
 
@@ -28,119 +34,157 @@ public class PauseTests : IDisposable
         }
     }
 
-    private static PauseOptions Allowance(int timesPerDay = 1, int minutes = 10) =>
-        new() { Enabled = true, TimesPerDay = timesPerDay, Minutes = minutes };
+    /// <summary>本机 +08:00 的某个时刻（2026 年 10 月的日历：16 周五、17 周六、19 周一、21 周三）。</summary>
+    private static DateTimeOffset At(int month, int day, int hour, int minute = 0) =>
+        new(new DateTime(2026, month, day, hour, minute, 0), TimeSpan.FromHours(8));
 
-    // ------------------------------------------------------------------ 额度
+    private static PauseOptions Allowance(
+        bool enabled = true,
+        int workdayTimes = 1, int workdayMinutes = 5, PausePeriod workdayPeriod = PausePeriod.Day,
+        int weekendTimes = 3, int weekendMinutes = 30, PausePeriod weekendPeriod = PausePeriod.Day) =>
+        new()
+        {
+            Enabled = enabled,
+            Workday = new PauseBudget { Period = workdayPeriod, Times = workdayTimes, Minutes = workdayMinutes },
+            Weekend = new PauseBudget { Period = weekendPeriod, Times = weekendTimes, Minutes = weekendMinutes },
+        };
 
-    [Fact]
-    public void 从没暂停过_现在就可以()
-    {
-        var options = Allowance();
-        var state = PauseState.Load(_config);
-
-        Assert.False(state.IsPaused("edge", options, Morning));
-        Assert.True(state.CanPause("edge", options, Morning));
-        Assert.Null(state.AvailableAt("edge", options, Morning));
-    }
-
-    [Fact]
-    public void 同一天里可以停好几次_不必等到明天()
-    {
-        // 这就是这次改动的全部意义：原来是"每 N 天一次"（N 是整数，最小 1 天），
-        // 于是上午停过一次，今天再没有第二次机会。
-        var options = Allowance(timesPerDay: 3);
-        var state = PauseState.Load(_config);
-
-        state.Record("edge", Morning);
-
-        // 上午九点停的那一次，十点就走完了；十一点还能再停。
-        Assert.True(state.CanPause("edge", options, Morning.AddHours(2)));
-        Assert.Equal(2, state.LeftToday("edge", options, Morning.AddHours(2)));
-    }
+    // ------------------------------------------------------------------ 两套额度
 
     [Fact]
-    public void 次数用完要等明天零点()
+    public void 工作日和周末各算各的()
     {
-        var options = Allowance(timesPerDay: 2);
+        var options = Allowance(workdayTimes: 1, workdayMinutes: 5, weekendTimes: 3, weekendMinutes: 30);
         var state = PauseState.Load(_config);
 
-        state.Record("edge", Morning);
-        state.Record("edge", Morning.AddMinutes(40));
+        // 周六：周末那套，3 次 / 每次 30 分钟
+        state.Record("edge", options, At(10, 17, 10));
 
-        Assert.Equal(0, state.LeftToday("edge", options, Morning.AddMinutes(41)));
-        Assert.False(state.CanPause("edge", options, Morning.AddMinutes(60)));
+        Assert.Equal(2, state.LeftNow("edge", options, At(10, 17, 10)));
+        Assert.Equal(30, (state.PausedUntil("edge", At(10, 17, 10))!.Value - At(10, 17, 10)).TotalMinutes);
 
-        // 下一次能停的时刻就是明天零点 —— 不是"从最后一次算起再等一天"。
-        var tomorrow = new DateTimeOffset(2026, 10, 18, 0, 0, 0, TimeSpan.FromHours(8));
-        Assert.Equal(tomorrow, state.AvailableAt("edge", options, Morning.AddHours(6)));
-
-        // 过零点就是新的一天，额度是满的。
-        Assert.Equal(2, state.LeftToday("edge", options, tomorrow));
-        Assert.True(state.CanPause("edge", options, tomorrow));
+        // 周一是另一套：一次都还没动，而且时长是工作日那条（5 分钟）
+        Assert.Equal(1, state.LeftNow("edge", options, At(10, 19, 9)));
+        Assert.False(state.IsPaused("edge", At(10, 19, 9)));
     }
 
     [Fact]
     public void 正在暂停中不能再花一次额度()
     {
-        var options = Allowance(timesPerDay: 5);
+        var options = Allowance(workdayTimes: 5, workdayMinutes: 10);
         var state = PauseState.Load(_config);
 
-        state.Record("edge", Morning);
+        state.Record("edge", options, At(10, 19, 9));
 
-        // 一分钟之后还在暂停里：再点一次不该把第二次额度花在一段没走完的暂停上。
-        Assert.False(state.CanPause("edge", options, Morning.AddMinutes(1)));
-        Assert.Equal(Morning.AddMinutes(10), state.AvailableAt("edge", options, Morning.AddMinutes(1)));
+        Assert.False(state.CanPause("edge", options, At(10, 19, 9, 5)));
+        Assert.Equal(At(10, 19, 9, 10), state.AvailableAt("edge", options, At(10, 19, 9, 5)));
 
-        // 这一轮走完就行了，额度还有 4 次。
-        Assert.True(state.CanPause("edge", options, Morning.AddMinutes(11)));
-        Assert.Equal(4, state.LeftToday("edge", options, Morning.AddMinutes(11)));
+        // 这一轮走完就行了，额度并没有多花
+        Assert.True(state.CanPause("edge", options, At(10, 19, 9, 11)));
+        Assert.Equal(4, state.LeftNow("edge", options, At(10, 19, 9, 11)));
     }
 
     [Fact]
-    public void 一次暂停按配置的长度走_不再多()
+    public void 周五晚上停的那一轮跨到周六也不换套()
     {
-        var options = Allowance(minutes: 10);
+        // 开始那一刻决定用哪一套、多长：23:50 停 30 分钟，到周六 00:20 结束 ——
+        // 周六的额度一次都没动。
+        var options = Allowance(workdayTimes: 2, workdayMinutes: 30, weekendTimes: 1, weekendMinutes: 10);
         var state = PauseState.Load(_config);
 
-        state.Record("edge", Morning);
+        state.Record("edge", options, At(10, 16, 23, 50));
 
-        Assert.True(state.IsPaused("edge", options, Morning));
-        Assert.True(state.IsPaused("edge", options, Morning.AddMinutes(9)));
-        Assert.False(state.IsPaused("edge", options, Morning.AddMinutes(11)));
+        Assert.True(state.IsPaused("edge", At(10, 17, 0, 10)));
+        Assert.False(state.IsPaused("edge", At(10, 17, 0, 30)));
+        Assert.Equal(1, state.LeftNow("edge", options, At(10, 17, 0, 10)));
     }
+
+    // ------------------------------------------------------------------ 周期
+
+    [Fact]
+    public void 每天_过零点重新算()
+    {
+        var options = Allowance(weekendTimes: 3, weekendMinutes: 30);
+        var state = PauseState.Load(_config);
+
+        // 周六 23:50 用掉一次（这一期是 10-17）
+        state.Record("edge", options, At(10, 17, 23, 50));
+        Assert.Equal(2, state.LeftNow("edge", options, At(10, 17, 23, 59)));
+        Assert.Equal(3, state.LeftNow("edge", options, At(10, 18, 0, 30)));
+    }
+
+    [Fact]
+    public void 每周_周一零点重新算()
+    {
+        var options = Allowance(workdayTimes: 1, workdayPeriod: PausePeriod.Week);
+        var state = PauseState.Load(_config);
+
+        // 周三用掉这一周唯一的一次
+        state.Record("edge", options, At(10, 21, 9));
+
+        Assert.Equal(0, state.LeftNow("edge", options, At(10, 21, 10)));
+        Assert.Equal(At(10, 26, 0), state.AvailableAt("edge", options, At(10, 21, 10)));   // 下周一零点
+
+        Assert.Equal(1, state.LeftNow("edge", options, At(10, 26, 0)));
+        Assert.True(state.CanPause("edge", options, At(10, 26, 0)));
+    }
+
+    [Fact]
+    public void 每月_一号零点重新算()
+    {
+        var options = Allowance(workdayTimes: 2, workdayPeriod: PausePeriod.Month);
+        var state = PauseState.Load(_config);
+
+        state.Record("edge", options, At(10, 21, 9));
+
+        Assert.Equal(1, state.LeftNow("edge", options, At(10, 30, 9)));
+
+        // 11 月 2 号是周一，已经在新的一期里了
+        Assert.Equal(2, state.LeftNow("edge", options, At(11, 2, 9)));
+    }
+
+    [Fact]
+    public void 同样的次数摊在更长的周期上就是收紧()
+    {
+        // 每天 1 次比每周 1 次松得多 —— 配置里的放宽判定要能看出这一点。
+        var daily = ConfigWithPause(Allowance(workdayPeriod: PausePeriod.Day));
+
+        Assert.Equal(ChangeDirection.Tightening,
+            ConfigRelaxation.Classify(daily, ConfigWithPause(Allowance(workdayPeriod: PausePeriod.Week))));
+        Assert.Equal(ChangeDirection.Relaxing,
+            ConfigRelaxation.Classify(ConfigWithPause(Allowance(workdayPeriod: PausePeriod.Month)), daily));
+    }
+
+    // ------------------------------------------------------------------ 账本
 
     [Fact]
     public void 记录能跨重启存活()
     {
-        var options = Allowance(timesPerDay: 2);
+        var options = Allowance(workdayTimes: 2);
 
         var recorded = PauseState.Load(_config);
-        recorded.Record("edge", Morning);
+        recorded.Record("edge", options, At(10, 19, 9));
         recorded.Save(_config);
 
         var reloaded = PauseState.Load(_config);
 
-        Assert.Equal(1, reloaded.LeftToday("edge", options, Morning.AddMinutes(30)));
-        Assert.True(reloaded.IsPaused("edge", options, Morning.AddMinutes(5)));
-
-        // 第二天重新数
-        Assert.Equal(2, reloaded.LeftToday("edge", options, Morning.AddDays(1)));
+        Assert.Equal(1, reloaded.LeftNow("edge", options, At(10, 19, 9, 30)));
+        Assert.True(reloaded.IsPaused("edge", At(10, 19, 9, 2)));
     }
 
     [Fact]
-    public void 老格式的账本还能读_只是把额度当成今天已经用过()
+    public void 老账本里那一轮暂停算已经结束()
     {
-        // 老版本只有 Last。读进来之后"IsPaused"照样对（那一项还在），
-        // 额度则从今天重新算 —— 一次性的事，第一次保存之后就是新格式了。
-        var stamped = Morning.AddMinutes(-5).ToString("O");
-        File.WriteAllText(PauseState.PathFor(_config), "{\"Last\":{\"edge\":\"" + stamped + "\"}}");
+        // 老文件只有 Last、没有批过的分钟数。读成 0 分钟 = 那一轮已经结束 ——
+        // 升级那一刻正开着的暂停会提前结束，这是唯一一次性的代价。
+        var last = At(10, 17, 9).ToString("O");
+        File.WriteAllText(PauseState.PathFor(_config), "{\"Last\":{\"edge\":\"" + last + "\"}}");
 
         var state = PauseState.Load(_config);
-        var options = Allowance();
 
-        Assert.True(state.IsPaused("edge", options, Morning));       // 那一轮还没走完
-        Assert.Equal(1, state.LeftToday("edge", options, Morning));
+        Assert.False(state.IsPaused("edge", At(10, 17, 9, 1)));
+        Assert.Equal(0, state.MinutesOf("edge"));
+        Assert.Equal(3, state.LeftNow("edge", Allowance(), At(10, 17, 9, 1)));
     }
 
     [Fact]
@@ -158,13 +202,13 @@ public class PauseTests : IDisposable
         var options = Allowance();
         var recorded = PauseState.Load(_config);
 
-        recorded.Record("edge", Morning);
+        recorded.Record("edge", options, At(10, 19, 9));
         recorded.Save(_config);
 
         var state = PauseState.Load(_config);
 
-        Assert.True(state.CanPause("codex", options, Morning));
-        Assert.False(state.IsPaused("codex", options, Morning));
+        Assert.True(state.CanPause("codex", options, At(10, 19, 9)));
+        Assert.False(state.IsPaused("codex", At(10, 19, 9)));
     }
 
     // ------------------------------------------------------------------ 放宽判定
@@ -172,28 +216,36 @@ public class PauseTests : IDisposable
     [Fact]
     public void 调松额度是放宽()
     {
-        var before = ConfigWithPause(Allowance(timesPerDay: 1, minutes: 10));
+        var before = ConfigWithPause(Allowance(workdayTimes: 1, workdayMinutes: 5, workdayPeriod: PausePeriod.Week));
 
-        // 三种调松：允许暂停、次数更多、每次更长 —— 都要令牌。
+        // 打开开关
         Assert.Equal(ChangeDirection.Relaxing,
-            ConfigRelaxation.Classify(ConfigWithPause(new PauseOptions { Enabled = false, TimesPerDay = 1, Minutes = 10 }), before));
+            ConfigRelaxation.Classify(ConfigWithPause(Allowance(enabled: false)), before));
+
+        // 次数更多、每次更长、周期更短 —— 三种都是放宽
         Assert.Equal(ChangeDirection.Relaxing,
-            ConfigRelaxation.Classify(before, ConfigWithPause(Allowance(timesPerDay: 3, minutes: 10))));
+            ConfigRelaxation.Classify(before, ConfigWithPause(Allowance(workdayTimes: 3, workdayMinutes: 5, workdayPeriod: PausePeriod.Week))));
         Assert.Equal(ChangeDirection.Relaxing,
-            ConfigRelaxation.Classify(before, ConfigWithPause(Allowance(timesPerDay: 1, minutes: 30))));
+            ConfigRelaxation.Classify(before, ConfigWithPause(Allowance(workdayTimes: 1, workdayMinutes: 30, workdayPeriod: PausePeriod.Week))));
+        Assert.Equal(ChangeDirection.Relaxing,
+            ConfigRelaxation.Classify(before, ConfigWithPause(Allowance(workdayTimes: 1, workdayMinutes: 5, workdayPeriod: PausePeriod.Day))));
+
+        // 周末那一套改了也算（额度是按规则分开的，两套都在同一条规则上）
+        Assert.Equal(ChangeDirection.Relaxing,
+            ConfigRelaxation.Classify(before, ConfigWithPause(Allowance(workdayTimes: 1, workdayMinutes: 5, workdayPeriod: PausePeriod.Week, weekendTimes: 9))));
     }
 
     [Fact]
     public void 调紧额度是免费的()
     {
-        var before = ConfigWithPause(Allowance(timesPerDay: 3, minutes: 10));
+        var before = ConfigWithPause(Allowance(workdayTimes: 3, workdayMinutes: 10, workdayPeriod: PausePeriod.Day));
 
         Assert.Equal(ChangeDirection.Tightening,
-            ConfigRelaxation.Classify(before, ConfigWithPause(Allowance(timesPerDay: 1, minutes: 10))));
+            ConfigRelaxation.Classify(before, ConfigWithPause(Allowance(workdayTimes: 1, workdayMinutes: 10, workdayPeriod: PausePeriod.Day))));
         Assert.Equal(ChangeDirection.Tightening,
-            ConfigRelaxation.Classify(before, ConfigWithPause(Allowance(timesPerDay: 3, minutes: 5))));
+            ConfigRelaxation.Classify(before, ConfigWithPause(Allowance(workdayTimes: 3, workdayMinutes: 5, workdayPeriod: PausePeriod.Day))));
         Assert.Equal(ChangeDirection.Tightening,
-            ConfigRelaxation.Classify(before, ConfigWithPause(new PauseOptions { Enabled = false, TimesPerDay = 3, Minutes = 10 })));
+            ConfigRelaxation.Classify(before, ConfigWithPause(Allowance(enabled: false))));
     }
 
     private static AppConfig ConfigWithPause(PauseOptions pause)
@@ -227,13 +279,13 @@ public class PauseTests : IDisposable
 
         var rule = config.Targets[0].Rules[0];
 
-        rule.Pause = new PauseOptions { Enabled = true, TimesPerDay = 1, Minutes = 0 };
+        rule.Pause = Allowance(workdayMinutes: 0);
         Assert.Contains(ConfigValidator.Validate(config), i => i.Severity == IssueSeverity.Error);
 
-        rule.Pause = new PauseOptions { Enabled = true, TimesPerDay = 0, Minutes = 10 };
+        rule.Pause = Allowance(weekendTimes: 0);
         Assert.Contains(ConfigValidator.Validate(config), i => i.Severity == IssueSeverity.Error);
 
-        rule.Pause = new PauseOptions { Enabled = true, TimesPerDay = 1, Minutes = 10 };
+        rule.Pause = Allowance();
         Assert.DoesNotContain(ConfigValidator.Validate(config), i => i.Severity == IssueSeverity.Error);
     }
 
@@ -241,6 +293,6 @@ public class PauseTests : IDisposable
     public void 额度会用一句话说清()
     {
         Assert.Equal("暂停：关", new PauseOptions { Enabled = false }.ToString());
-        Assert.Equal("每天最多 3 次，每次 10 分钟", Allowance(timesPerDay: 3, minutes: 10).ToString());
+        Assert.Equal("工作日 每天 1 次、每次 5 分钟；周末 每天 3 次、每次 30 分钟", Allowance().ToString());
     }
 }

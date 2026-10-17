@@ -307,24 +307,26 @@ public sealed class ConfigAuthority
         {
             var next = state.AvailableAt(ruleId, options, now) ?? now;
 
-            var why = state.IsPaused(ruleId, options, now)
+            var why = state.IsPaused(ruleId, now)
                 ? "这一轮暂停还没结束"
-                : $"今天的机会已经用掉了 {options.TimesPerDay} 次";
+                : $"「{PauseState.Scope(options, now)}」的次数已经用完了";
 
-            error = $"「{rule.Name}」现在停不了 —— {why}，要等到 {next:MM-dd HH:mm}"
-                    + $"（每天最多 {options.TimesPerDay} 次）。";
+            error = $"「{rule.Name}」现在停不了 —— {why}，要等到 {next:MM-dd HH:mm}。";
 
             return false;
         }
 
-        state.Record(ruleId, now);
+        state.Record(ruleId, options, now);
         state.Save(Path);
 
+        var until = state.PausedUntil(ruleId, now) ?? now;
+
         reply = Ipc.Serialize(new PauseReply(
-            now.AddMinutes(options.Minutes).ToString("O"),
+            until.ToString("O"),
             (state.AvailableAt(ruleId, options, now) ?? now).ToString("O"),
-            options.Minutes,
-            state.LeftToday(ruleId, options, now)));
+            (int)Math.Round((until - now).TotalMinutes),
+            state.LeftNow(ruleId, options, now),
+            PauseState.Scope(options, now)));
 
         return true;
     }

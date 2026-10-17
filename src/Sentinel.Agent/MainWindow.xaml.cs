@@ -393,7 +393,9 @@ public partial class MainWindow : Window
         (RulePolicyBox.SelectedItem as Choice<string?>)?.Value,
         (RuleScheduleBox.SelectedItem as Choice<string?>)?.Value,
         RulePriorityBox.Text, RuleReminderBox.Text,
-        RulePauseEnabledCheck.IsChecked, RulePauseTimesBox.Text, RulePauseMinutesBox.Text);
+        RulePauseEnabledCheck.IsChecked,
+        RulePauseWorkdayPeriodBox.SelectedIndex, RulePauseWorkdayTimesBox.Text, RulePauseWorkdayMinutesBox.Text,
+        RulePauseWeekendPeriodBox.SelectedIndex, RulePauseWeekendTimesBox.Text, RulePauseWeekendMinutesBox.Text);
 
     private string PolicySignature() => string.Join('\u001f',
         PolicyNameBox.Text,
@@ -1031,8 +1033,9 @@ public partial class MainWindow : Window
     {
         var options = _selectedRule?.Pause ?? new PauseOptions();
         var pauses = _state.Pauses;
+        var now = DateTimeOffset.Now;
 
-        PauseButton.Content = options.Enabled ? $"暂停 {options.Minutes} 分钟" : "暂停";
+        PauseButton.Content = options.Enabled ? $"暂停 {options.For(now).Minutes} 分钟" : "暂停";
         PauseButton.IsEnabled = options.Enabled && _selectedRule is not null;
 
         var lines = new List<string>();
@@ -1047,22 +1050,22 @@ public partial class MainWindow : Window
             lines.Add($"「{rule.Name}」还没允许暂停 —— 在下面「暂停」一节里勾上「允许暂停这条规则」，再点「应用修改」。"
                     + "开这个开关算放宽（保护开着的时候要令牌），但开好之后，暂停本身不需要令牌。");
         }
+        else if (pauses.IsPaused(rule.Id, now))
+        {
+            lines.Add($"「{rule.Name}」正在暂停中 —— 这一轮到 {pauses.PausedUntil(rule.Id, now):HH:mm} 结束。");
+        }
+        else if (pauses.AvailableAt(rule.Id, options, now) is { } next)
+        {
+            // 走到这里只剩一种"还不能停"：这一期（今天/本周/本月）的次数用光了。
+            lines.Add($"「{rule.Name}」现在停不了 —— 「{PauseState.Scope(options, now)}」的次数已经用完了，"
+                    + $"要等到 {next:MM-dd HH:mm}。");
+        }
         else
         {
-            var now = DateTimeOffset.Now;
+            var budget = options.For(now);
 
-            if (pauses.AvailableAt(rule.Id, options, now) is { } available)
-            {
-                // 两种"还不能停"：这一轮还没走完，或者今天的次数已经用光。
-                lines.Add(pauses.IsPaused(rule.Id, options, now)
-                    ? $"「{rule.Name}」正在暂停中 —— 这一轮到 {available:HH:mm} 结束（每天最多 {options.TimesPerDay} 次）。"
-                    : $"「{rule.Name}」今天的 {options.TimesPerDay} 次已经用完了 —— 明天零点之后可以再停。");
-            }
-            else
-            {
-                lines.Add($"「{rule.Name}」现在可以暂停 {options.Minutes} 分钟"
-                        + $"（每天最多 {options.TimesPerDay} 次，今天还剩 {pauses.LeftToday(rule.Id, options, now)} 次）。");
-            }
+            lines.Add($"「{rule.Name}」现在可以暂停 {budget.Minutes} 分钟"
+                    + $"（{PauseState.Scope(options, now)}还能停 {pauses.LeftNow(rule.Id, options, now)} 次）。");
         }
 
         if (extra is not null)
@@ -1527,11 +1530,15 @@ public partial class MainWindow : Window
         RuleEnabledCheck.IsChecked = _selectedRule.Enabled;
 
         RulePauseEnabledCheck.IsChecked = _selectedRule.Pause.Enabled;
-        RulePauseTimesBox.Text = _selectedRule.Pause.TimesPerDay.ToString();
-        RulePauseMinutesBox.Text = _selectedRule.Pause.Minutes.ToString();
+
+        RulePauseWorkdayTimesBox.Text = _selectedRule.Pause.Workday.Times.ToString();
+        RulePauseWorkdayMinutesBox.Text = _selectedRule.Pause.Workday.Minutes.ToString();
+        RulePauseWeekendTimesBox.Text = _selectedRule.Pause.Weekend.Times.ToString();
+        RulePauseWeekendMinutesBox.Text = _selectedRule.Pause.Weekend.Minutes.ToString();
 
         RefreshPolicyChoices();
         RefreshScheduleChoices();
+        RefreshPauseChoices();
 
         // 显式再叫一次：如果新旧规则的类型一样，SelectedItem 没变、事件不会触发，
         // 而标签可能还停在上一轮的样子。
@@ -1559,6 +1566,36 @@ public partial class MainWindow : Window
         RuleScheduleBox.ItemsSource = choices;
         RuleScheduleBox.SelectedItem = choices.FirstOrDefault(c => c.Value == _selectedRule?.ScheduleId)
                                        ?? choices[0];
+    }
+
+    /// <summary>暂停额度的周期下拉：两套（工作日 / 周末）各一个。</summary>
+    private void RefreshPauseChoices()
+    {
+        var choices = new List<Choice<PausePeriod>>
+        {
+            new(PausePeriod.Day, "每天"),
+            new(PausePeriod.Week, "每周"),
+            new(PausePeriod.Month, "每月"),
+        };
+
+        Select(RulePauseWorkdayPeriodBox, _selectedRule?.Pause.Workday.Period);
+        Select(RulePauseWeekendPeriodBox, _selectedRule?.Pause.Weekend.Period);
+
+        void Select(ComboBox box, PausePeriod? period)
+        {
+            box.ItemsSource = choices;
+            box.SelectedItem = choices.FirstOrDefault(c => c.Value == (period ?? PausePeriod.Day))
+                               ?? choices[0];
+        }
+    }
+
+    private static void ApplyPauseBudget(PauseBudget budget, ComboBox period, TextBox times, TextBox minutes)
+    {
+        if (period.SelectedItem is Choice<PausePeriod> choice)
+            budget.Period = choice.Value;
+
+        budget.Times = ParseInt(times.Text, budget.Times, 1, 100);
+        budget.Minutes = ParseInt(minutes.Text, budget.Minutes, 1, 24 * 60);
     }
 
     private void NewRule_Click(object sender, RoutedEventArgs e)
@@ -1668,11 +1705,15 @@ public partial class MainWindow : Window
         var reminder = RuleReminderBox.Text.Trim();
         _selectedRule.Reminder = string.IsNullOrEmpty(reminder) ? null : reminder;
 
-        // Through the same path as every other edit, so loosening any of these three asks for the
-        // token, while tightening them — fewer, shorter, or off — is free.
+        // Through the same path as every other edit, so loosening any of these asks for the token,
+        // while tightening them — fewer, shorter, or off — is free.
         _selectedRule.Pause.Enabled = RulePauseEnabledCheck.IsChecked == true;
-        _selectedRule.Pause.TimesPerDay = ParseInt(RulePauseTimesBox.Text, _selectedRule.Pause.TimesPerDay, 1, 48);
-        _selectedRule.Pause.Minutes = ParseInt(RulePauseMinutesBox.Text, _selectedRule.Pause.Minutes, 1, 24 * 60);
+
+        ApplyPauseBudget(_selectedRule.Pause.Workday, RulePauseWorkdayPeriodBox,
+                         RulePauseWorkdayTimesBox, RulePauseWorkdayMinutesBox);
+
+        ApplyPauseBudget(_selectedRule.Pause.Weekend, RulePauseWeekendPeriodBox,
+                         RulePauseWeekendTimesBox, RulePauseWeekendMinutesBox);
 
         if (isNew && _selectedTarget is not null && !_selectedTarget.Rules.Contains(_selectedRule))
             _selectedTarget.Rules.Add(_selectedRule);

@@ -332,9 +332,10 @@ public sealed class AgentState : IDisposable
 
         var until = DateTimeOffset.Parse(reply!.Until);
 
-        message = reply.LeftToday > 0
-            ? $"已暂停到 {until:HH:mm} —— 今天还能停 {reply.LeftToday} 次。"
-            : $"已暂停到 {until:HH:mm} —— 今天的次数用完了，明天零点之后可以再停。";
+        message = reply.Left > 0
+            ? $"已暂停到 {until:HH:mm} —— 「{reply.Scope}」还能停 {reply.Left} 次。"
+            : $"已暂停到 {until:HH:mm} —— 「{reply.Scope}」的次数用完了，"
+              + $"下一次要等到 {DateTimeOffset.Parse(reply.NextAvailableAt):MM-dd HH:mm}。";
 
         return true;
     }

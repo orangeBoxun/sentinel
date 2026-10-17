@@ -171,13 +171,20 @@ public static class ConfigValidator
 
                 if (rule.Pause.Enabled)
                 {
-                    if (rule.Pause.Minutes <= 0)
-                        issues.Add(Error(ruleWhere, "暂停时长必须大于 0 分钟"));
-                    else if (rule.Pause.Minutes > 24 * 60)
-                        issues.Add(Error(ruleWhere, "暂停时长不能超过 24 小时"));
+                    foreach (var (label, budget) in new[]
+                             {
+                                 ("工作日", rule.Pause.Workday),
+                                 ("周末", rule.Pause.Weekend),
+                             })
+                    {
+                        if (budget.Minutes <= 0)
+                            issues.Add(Error(ruleWhere, $"{label}的暂停时长必须大于 0 分钟"));
+                        else if (budget.Minutes > 24 * 60)
+                            issues.Add(Error(ruleWhere, $"{label}的暂停时长不能超过 24 小时"));
 
-                    if (rule.Pause.TimesPerDay < 1)
-                        issues.Add(Error(ruleWhere, "每天的暂停次数至少是 1 次"));
+                        if (budget.Times < 1)
+                            issues.Add(Error(ruleWhere, $"{label}的暂停次数至少是 1 次"));
+                    }
                 }
 
                 // A whitelist rule allows, so it needs no policy; everything else must name one.

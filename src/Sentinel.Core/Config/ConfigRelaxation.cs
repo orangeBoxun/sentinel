@@ -254,10 +254,10 @@ public static class ConfigRelaxation
                     whys.Add($"{ruleLabel}的生效时间从「{older.ScheduleId ?? "始终生效"}」改成「{rule.ScheduleId ?? "始终生效"}」");
 
                 if (Widens(c => RuleOf(c, id, ruleId).Pause.Enabled = rule.Pause.Enabled)
-                    || Widens(c => RuleOf(c, id, ruleId).Pause.TimesPerDay = rule.Pause.TimesPerDay)
-                    || Widens(c => RuleOf(c, id, ruleId).Pause.Minutes = rule.Pause.Minutes))
+                    || Widens(c => RuleOf(c, id, ruleId).Pause.Workday = rule.Pause.Workday)
+                    || Widens(c => RuleOf(c, id, ruleId).Pause.Weekend = rule.Pause.Weekend))
                 {
-                    whys.Add($"{ruleLabel}的暂停设置放宽了（现在是每天最多 {rule.Pause.TimesPerDay} 次、每次 {rule.Pause.Minutes} 分钟）");
+                    whys.Add($"{ruleLabel}的暂停设置放宽了（现在是 工作日 {rule.Pause.Workday}；周末 {rule.Pause.Weekend}）");
                 }
             }
         }
@@ -404,12 +404,28 @@ public static class ConfigRelaxation
 
         fold.Flag(before.Enabled, after.Enabled, restrictiveWhenTrue: false);
 
-        // 次数给得更多是放宽，给得更少是收紧 —— 和"间隔天数"读的方向正好相反。
-        if (before.TimesPerDay != after.TimesPerDay)
-            fold.Note(after.TimesPerDay > before.TimesPerDay ? ChangeDirection.Relaxing : ChangeDirection.Tightening);
+        fold.Note(CompareBudget(before.Workday, after.Workday));
+        fold.Note(CompareBudget(before.Weekend, after.Weekend));
+
+        return fold.Value;
+    }
+
+    /// <summary>
+    /// 一套额度的松紧：次数更多、每次更长都是放宽；同样的次数摊在更长的周期上（每天 → 每周）
+    /// 则是<b>收紧</b> —— 机会变少了。
+    /// </summary>
+    private static ChangeDirection CompareBudget(PauseBudget before, PauseBudget after)
+    {
+        var fold = new Fold();
+
+        if (before.Times != after.Times)
+            fold.Note(after.Times > before.Times ? ChangeDirection.Relaxing : ChangeDirection.Tightening);
 
         if (before.Minutes != after.Minutes)
             fold.Note(after.Minutes > before.Minutes ? ChangeDirection.Relaxing : ChangeDirection.Tightening);
+
+        if (before.Period != after.Period)
+            fold.Note(after.Period > before.Period ? ChangeDirection.Tightening : ChangeDirection.Relaxing);
 
         return fold.Value;
     }

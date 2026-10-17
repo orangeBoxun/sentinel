@@ -161,10 +161,10 @@ public class MonitorLoopTests
         {
             var now = DateTimeOffset.Now;
             var rule = config.Targets[0].Rules[0];
-            rule.Pause = new PauseOptions { Enabled = true, TimesPerDay = 1, Minutes = 10 };
+            rule.Pause = new PauseOptions { Enabled = true };
 
             var state = PauseState.Load(configPath);
-            state.Record(rule.Id, now);
+            state.Record(rule.Id, rule.Pause, now);
             state.Save(configPath);
 
             var loop = BuildLoop(config, reader, action, configPath: configPath);
