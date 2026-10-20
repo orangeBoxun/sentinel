@@ -247,7 +247,7 @@ public sealed class ModelSupervisor : IModelSupervisor
 
         // 网断着就不去问了 —— 现在去问只会挂满一分钟，而它必然失败。
         if (BlockingKind == ModelTroubleKind.Offline
-            && !await _connectivity.IsOnlineAsync().ConfigureAwait(false))
+            && !await _connectivity.IsStableAsync().ConfigureAwait(false))
         {
             return false;
         }
@@ -416,7 +416,7 @@ public sealed class ModelSupervisor : IModelSupervisor
             // 没网就别发这一次了：它要么立刻失败、要么挂满 60 秒，两种都白等，后果一样。
             // 这条判断自己有 30 秒缓存，所以不是每个页面都探一次。
             if (!ModelTrouble.IsLocal(provider.Endpoint)
-                && !await _connectivity.IsOnlineAsync().ConfigureAwait(false))
+                && !await _connectivity.IsStableAsync().ConfigureAwait(false))
             {
                 BlockingKind = ModelTroubleKind.Offline;
                 BlockingIssue = OfflineIssue;
@@ -475,13 +475,28 @@ public sealed class ModelSupervisor : IModelSupervisor
     private const string OfflineIssue = "网络看起来是断的 —— 模型判定发不出去。等网回来之后会自动恢复。";
 
     /// <summary>
-    /// 只有"超时"和"公网连不上"这两类才需要知道有没有网 —— 别的分类用不上，也就别白探一次。
+    /// 这次失败，该算"你这边网络的事"还是"服务商的事"。
+    ///
+    /// <para>
+    /// <b>时间尺度要对上。</b>最初这里只问"能不能建一条 TCP 连接"，结果网一抖，模型请求照样挂满
+    /// 60 秒，而那个检查说"有网"，于是被判成"模型太慢"、继续弹全屏 —— 用户看到的就是又开始了。
+    /// 现在的标准是：连续三趟 HTTPS 请求都完成，**并且**那个服务商自己的地址也能换回响应。
+    /// 后者是关键：路通、但换不回服务商的响应，才说明慢的是它的推理。
+    /// </para>
     /// </summary>
-    private Task<bool> OnlineIfItMattersAsync(ModelCallOutcome outcome, string? endpoint) =>
-        outcome == ModelCallOutcome.Timeout
-        || (outcome == ModelCallOutcome.Unreachable && !ModelTrouble.IsLocal(endpoint))
-            ? _connectivity.IsOnlineAsync()
-            : Task.FromResult(true);
+    private async Task<bool> OnlineIfItMattersAsync(ModelCallOutcome outcome, string? endpoint)
+    {
+        if (outcome == ModelCallOutcome.Timeout)
+        {
+            return await _connectivity.IsStableAsync().ConfigureAwait(false)
+                && await _connectivity.IsReachableAsync(endpoint ?? "").ConfigureAwait(false);
+        }
+
+        if (outcome == ModelCallOutcome.Unreachable && !ModelTrouble.IsLocal(endpoint))
+            return await _connectivity.IsStableAsync().ConfigureAwait(false);
+
+        return true;
+    }
 
     private ModelProvider? ActiveProvider()
     {

@@ -516,7 +516,7 @@ public class ModelTests
         var supervisor = new ModelSupervisor(
             () => config,
             new ModelClient(new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(10) }),
-            new Connectivity(probe: _ => Task.FromResult(false), now: () => now));
+            new Connectivity(get: (_, _) => Task.FromResult(false), now: () => now));
 
         supervisor.Request("r", "禁令", Snapshot());
         await WaitUntil(() => supervisor.BlockingKind == ModelTroubleKind.Offline);
@@ -539,7 +539,7 @@ public class ModelTests
         var supervisor = new ModelSupervisor(
             () => config,
             new ModelClient(new HttpClient(new SlowHandler()) { Timeout = TimeSpan.FromMilliseconds(200) }),
-            new Connectivity(probe: _ => Task.FromResult(true)));
+            new Connectivity(get: (_, _) => Task.FromResult(true)));
 
         supervisor.Request("r", "禁令", Snapshot());
         await WaitUntil(() => supervisor.BlockingKind != ModelTroubleKind.None);
@@ -565,7 +565,7 @@ public class ModelTests
         var supervisor = new ModelSupervisor(
             () => config,
             new ModelClient(new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(10) }),
-            new Connectivity(probe: _ => Task.FromResult(online), now: () => now));
+            new Connectivity(get: (_, _) => Task.FromResult(online), now: () => now));
 
         supervisor.Request("r", "禁令", Snapshot());
         await WaitUntil(() => supervisor.BlockingKind == ModelTroubleKind.Offline);
@@ -576,6 +576,32 @@ public class ModelTests
         Assert.True(await supervisor.ProbeAsync());
         Assert.Equal(ModelTroubleKind.None, supervisor.BlockingKind);
         Assert.Null(supervisor.BlockingIssue);
+    }
+
+    [Fact]
+    public async Task 网能跑通但到不了那个服务商_那是网络的事()
+    {
+        // 用户点出来的那个漏洞："能短暂 ping 通和模型请求这俩需要的网络稳定时间不是一个量级。"
+        // 所以'超时'这一类不能只看'网通不通'，还要看**那个服务商自己的地址**换不换得回响应：
+        // 换不回来，就是路的事，不是'模型太慢'，不该催他换模型。
+        var provider = Provider(ApiFormat.OpenAi);
+
+        var config = new AppConfig();
+        config.Models.Add(provider);
+        config.ActiveModelId = provider.Id;
+
+        var supervisor = new ModelSupervisor(
+            () => config,
+            new ModelClient(new HttpClient(new SlowHandler()) { Timeout = TimeSpan.FromMilliseconds(200) }),
+            // 国内那两趟都通，但到 api.openai.com 的那一趟不通。
+            new Connectivity(get: (url, _) => Task.FromResult(
+                url.Contains("baidu", StringComparison.Ordinal)
+                || url.Contains("bing", StringComparison.Ordinal))));
+
+        supervisor.Request("r", "禁令", Snapshot());
+        await WaitUntil(() => supervisor.BlockingKind != ModelTroubleKind.None);
+
+        Assert.Equal(ModelTroubleKind.Offline, supervisor.BlockingKind);
     }
 
     private static async Task WaitUntil(Func<bool> condition)
