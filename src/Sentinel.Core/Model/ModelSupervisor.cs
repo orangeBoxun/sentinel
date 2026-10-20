@@ -104,10 +104,14 @@ public sealed class ModelSupervisor : IModelSupervisor
     /// <summary>每次判定现取一次配置 —— 用户在界面上换了服务商或者改了 key，下一次就该用新的。</summary>
     private readonly Func<AppConfig> _config;
 
-    public ModelSupervisor(Func<AppConfig> config, ModelClient? client = null)
+    /// <summary>判断"这台机器现在有没有网" —— 用来把"你这边断了"和"服务商不给你用"分开。</summary>
+    private readonly Connectivity _connectivity;
+
+    public ModelSupervisor(Func<AppConfig> config, ModelClient? client = null, Connectivity? connectivity = null)
     {
         _config = config;
         _client = client ?? new ModelClient();
+        _connectivity = connectivity ?? new Connectivity();
     }
 
     /// <summary>
@@ -241,13 +245,21 @@ public sealed class ModelSupervisor : IModelSupervisor
         if (provider is null)
             return false;
 
+        // 网断着就不去问了 —— 现在去问只会挂满一分钟，而它必然失败。
+        if (BlockingKind == ModelTroubleKind.Offline
+            && !await _connectivity.IsOnlineAsync().ConfigureAwait(false))
+        {
+            return false;
+        }
+
         try
         {
             var result = await _client
                 .JudgeAsync(provider, ProbeInstruction(), ProbeSnapshot(), CancellationToken.None)
                 .ConfigureAwait(false);
 
-            var trouble = ModelTrouble.Classify(result.Outcome, provider.Endpoint);
+            var online = await OnlineIfItMattersAsync(result.Outcome, provider.Endpoint).ConfigureAwait(false);
+            var trouble = ModelTrouble.Classify(result.Outcome, provider.Endpoint, online);
 
             // 没拿到判定：不能算好了。**只有真拿到判定才算好了** —— 服务端 5xx、回来的东西
             // 看不懂、连不上，都只说明"这次没学到东西"，把它们读成"通了"就等于提醒因为一次
@@ -257,10 +269,12 @@ public sealed class ModelSupervisor : IModelSupervisor
                 lock (_gate)
                 {
                     BlockingKind = trouble;
-                    BlockingIssue = result.Message ?? "模型监督现在拿不到判定。";
+                    BlockingIssue = trouble == ModelTroubleKind.Offline
+                        ? OfflineIssue
+                        : result.Message ?? "模型监督现在拿不到判定。";
                 }
 
-                return false;   // 接着提醒
+                return false;   // 接着（该吵的时候）提醒
             }
 
             lock (_gate)
@@ -399,6 +413,16 @@ public sealed class ModelSupervisor : IModelSupervisor
                 return;
             }
 
+            // 没网就别发这一次了：它要么立刻失败、要么挂满 60 秒，两种都白等，后果一样。
+            // 这条判断自己有 30 秒缓存，所以不是每个页面都探一次。
+            if (!ModelTrouble.IsLocal(provider.Endpoint)
+                && !await _connectivity.IsOnlineAsync().ConfigureAwait(false))
+            {
+                BlockingKind = ModelTroubleKind.Offline;
+                BlockingIssue = OfflineIssue;
+                return;
+            }
+
             var result = await _client.JudgeAsync(provider, instruction, snapshot, CancellationToken.None)
                 .ConfigureAwait(false);
 
@@ -414,15 +438,22 @@ public sealed class ModelSupervisor : IModelSupervisor
                     break;
 
                 default:
-                    // **拿不到判定，一律要吵** —— 限流、欠费、5xx、公网连不上、太慢、本地没起来，
-                    // 全都是同一件事：没人判了。分类只决定提醒里那句话怎么说（见 ModelTrouble），
+                    // **拿不到判定，就是"没人判了"** —— 限流、欠费、5xx、公网连不上、太慢、
+                    // 本地没起来，全都是同一件事。分类只决定提醒里那句话怎么说（见 ModelTrouble），
                     // 节奏是同一个（见 ModelAlertPacing）。
                     //
                     // 原来只吵"本地没起来"和"太慢"两类，另外几类一个不吵、一个五分钟才吵一次 ——
                     // 而用户真正会碰到的是免费在线模型被限流：网好好的、网站打得开、照样能刷，
                     // 只是没人判了。那种情况下五分钟一次的提醒起不到任何作用。
-                    BlockingKind = ModelTrouble.Classify(result.Outcome, provider.Endpoint);
-                    BlockingIssue = result.Message ?? "模型监督现在拿不到判定。";
+                    //
+                    // 反过来的那一头也要区分：**整台机器没网**的时候不该吵（网站自己也打不开），
+                    // 所以要先问一句"现在有网吗"（见 Connectivity）。
+                    var online = await OnlineIfItMattersAsync(result.Outcome, provider.Endpoint).ConfigureAwait(false);
+
+                    BlockingKind = ModelTrouble.Classify(result.Outcome, provider.Endpoint, online);
+                    BlockingIssue = BlockingKind == ModelTroubleKind.Offline
+                        ? OfflineIssue
+                        : result.Message ?? "模型监督现在拿不到判定。";
                     break;
             }
         }
@@ -436,6 +467,21 @@ public sealed class ModelSupervisor : IModelSupervisor
                 _inFlight.Remove(key);
         }
     }
+
+    /// <summary>
+    /// 网断着的时候那句说明。它<b>不会</b>被弹成全屏（见 <see cref="ModelAlertPacing"/>）——
+    /// 只出现在「大语言模型」页的状态行里，让人知道监督为什么不动。
+    /// </summary>
+    private const string OfflineIssue = "网络看起来是断的 —— 模型判定发不出去。等网回来之后会自动恢复。";
+
+    /// <summary>
+    /// 只有"超时"和"公网连不上"这两类才需要知道有没有网 —— 别的分类用不上，也就别白探一次。
+    /// </summary>
+    private Task<bool> OnlineIfItMattersAsync(ModelCallOutcome outcome, string? endpoint) =>
+        outcome == ModelCallOutcome.Timeout
+        || (outcome == ModelCallOutcome.Unreachable && !ModelTrouble.IsLocal(endpoint))
+            ? _connectivity.IsOnlineAsync()
+            : Task.FromResult(true);
 
     private ModelProvider? ActiveProvider()
     {

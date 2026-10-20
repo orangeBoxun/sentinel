@@ -176,6 +176,24 @@ public sealed class ModelAlertPacingTests
     }
 
     [Fact]
+    public async Task 没网的时候不催_但会隔两分钟探一次()
+    {
+        // 网断着的时候网站自己也打不开，拦不拦没区别 —— 这时候弹全屏只是噪音。
+        // 但也不能一直不看：网什么时候回来，只有探测能认出来。
+        var probes = 0;
+
+        var alerts = await RunAsync(TimeSpan.FromMinutes(20),
+            pacing => pacing.StepAsync(ModelTroubleKind.Offline, () =>
+            {
+                probes++;
+                return Task.FromResult(false);
+            }));
+
+        Assert.Empty(alerts);
+        Assert.Equal(10, probes);   // 二十分钟 / 两分钟
+    }
+
+    [Fact]
     public async Task 探测通了就闭嘴_而且下次出问题立刻说()
     {
         var clock = new FakeClock();

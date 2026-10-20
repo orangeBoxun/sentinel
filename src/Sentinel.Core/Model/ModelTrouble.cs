@@ -37,6 +37,21 @@ public enum ModelTroubleKind
     /// </para>
     /// </summary>
     TooSlow,
+
+    /// <summary>
+    /// <b>这台机器没网。</b>
+    ///
+    /// <para>
+    /// 这一类和上面几类的区别不在"判定没了"（一样没了），而在<b>该不该吵</b>：网断的时候，
+    /// 那些网站自己也打不开，拦不拦没有区别。为一件不会发生的事每 30 秒弹一次全屏只会制造噪音，
+    /// 把人训练成"看见 Sentinel 的提醒就关掉"。
+    /// </para>
+    /// <para>
+    /// 所以要安静 —— 但不是不管：等网回来之后，原来的问题（服务商限流、模型太慢）该吵的照样吵。
+    /// 判断在 <see cref="Connectivity"/>。
+    /// </para>
+    /// </summary>
+    Offline,
 }
 
 /// <summary>
@@ -60,20 +75,27 @@ public static class ModelTrouble
     /// <summary>
     /// 这次失败是哪一类。<b>只有"拿到了判定"才算没停</b> —— 其余每一类都意味着没人判了。
     /// </summary>
-    public static ModelTroubleKind Classify(ModelCallOutcome outcome, string? endpoint) => outcome switch
+    /// <param name="online">
+    /// 这台机器现在有没有网（见 <see cref="Connectivity"/>）。只在"超时"和"公网连不上"这两类上
+    /// 起作用：没网的时候它们是 <see cref="ModelTroubleKind.Offline"/>（安静），有网的时候才是
+    /// "太慢"或者"服务商不给你用"（要吵）。
+    /// </param>
+    public static ModelTroubleKind Classify(ModelCallOutcome outcome, string? endpoint, bool online = true) => outcome switch
     {
         ModelCallOutcome.Answered => ModelTroubleKind.None,
 
-        // 等超时：服务在，只是慢到拿不到判定。和"没起来"一样地吵，话不一样。
-        ModelCallOutcome.Timeout => ModelTroubleKind.TooSlow,
+        // 等超时：有网就是"服务在、只是慢到拿不到判定"；没网就是"根本发不出去"。
+        ModelCallOutcome.Timeout => online ? ModelTroubleKind.TooSlow : ModelTroubleKind.Offline,
 
-        // 本机/内网连不上 = 你自己的服务没起来。这一类最好办，话说得最具体。
+        // 本机/内网连不上 = 你自己的服务没起来。这一类不需要公网，所以不看 online。
         ModelCallOutcome.Unreachable when IsLocal(endpoint) => ModelTroubleKind.LocalUnreachable,
+
+        // 公网连不上：有网说明是那个服务商的事（要吵），没网说明是你自己的事（安静）。
+        ModelCallOutcome.Unreachable => online ? ModelTroubleKind.NeedsAttention : ModelTroubleKind.Offline,
 
         // 其余全部归"要你去处理"：
         //   4xx / 402 / 429 —— 服务商不给你用了
         //   5xx、或者回了 200 却读不出判定 —— 它没在判任何东西
-        //   公网地址连不上 —— 没网，或者那个服务商就是不通
         // 话不一样（在结果的消息里），要做的事一样：换一个能用的。
         _ => ModelTroubleKind.NeedsAttention,
     };

@@ -88,4 +88,28 @@ public class ModelTroubleTests
         Assert.Equal(ModelTroubleKind.NeedsAttention,
             ModelTrouble.Classify(ModelCallOutcome.NoAnswer, "http://127.0.0.1:11434/v1"));
     }
+
+    [Fact]
+    public void 整台机器没网的时候要安静()
+    {
+        // 用户的原话："本身网络没通的情况下，也会不断弹出 60 秒超时的全屏提示"。
+        // 网断的时候网站自己也打不开，拦不拦没区别 —— 这些全屏只会把人训练成看见就关掉。
+        // 所以要先把"你这边断了"和"服务商不给你用"分开。
+        const string Public = "https://open.bigmodel.cn/api/paas/v4/chat/completions";
+
+        Assert.Equal(ModelTroubleKind.Offline, ModelTrouble.Classify(ModelCallOutcome.Timeout, Public, online: false));
+        Assert.Equal(ModelTroubleKind.Offline, ModelTrouble.Classify(ModelCallOutcome.Unreachable, Public, online: false));
+
+        // 同样的失败，只要网是通的，那就是服务商那边的事 —— 照吵。
+        Assert.Equal(ModelTroubleKind.TooSlow, ModelTrouble.Classify(ModelCallOutcome.Timeout, Public, online: true));
+        Assert.Equal(ModelTroubleKind.NeedsAttention, ModelTrouble.Classify(ModelCallOutcome.Unreachable, Public, online: true));
+
+        // 本机的服务不看"有没有网"：它压根不需要公网，连不上就是你自己的服务没起来。
+        Assert.Equal(ModelTroubleKind.LocalUnreachable,
+            ModelTrouble.Classify(ModelCallOutcome.Unreachable, "http://127.0.0.1:11434/v1", online: false));
+
+        // 4xx/5xx 是服务端明确答了话，和网断没网无关。
+        Assert.Equal(ModelTroubleKind.NeedsAttention,
+            ModelTrouble.Classify(ModelCallOutcome.NeedsAttention, Public, online: false));
+    }
 }

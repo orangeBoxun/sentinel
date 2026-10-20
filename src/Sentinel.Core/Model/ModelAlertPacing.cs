@@ -27,10 +27,14 @@ public enum PacingStep
 /// </para>
 /// <list type="bullet">
 /// <item><description>
-/// <b>一律 30 秒一次</b>，不管停在哪一类上。原来钥匙/欠费那类要五分钟才说一次，理由是
+/// <b>除了"没网"那类**一律 30 秒一次**</b>。原来钥匙/欠费那类要五分钟才说一次，理由是
 /// "外面的事，催也没用" —— 但真正会碰到的是<b>免费在线模型被限流、被拒绝</b>：
 /// 网好好的、网站打得开、他照样能刷，只是没人判了。五分钟一次起不到"逼他换一个能用的
 /// 模型"的作用，而那个作用正是他要的。
+/// </description></item>
+/// <item><description>
+/// <b>"没网"是唯一不催的一类</b>（见 <see cref="ModelTroubleKind.Offline"/>）：那时网站
+/// 自己也打不开，为一件不会发生的事每 30 秒弹一次只会制造噪音。探测照旧，网一回来接着吵。
 /// </description></item>
 /// <item><description>
 /// <b>探得比催稀</b>：探测是一次真正的判定请求，会占住那台机器（慢模型上一探就是一分钟）。
@@ -122,8 +126,17 @@ public sealed class ModelAlertPacing
         _probed = null;
     }
 
-    public static TimeSpan ProbeEveryFor(ModelTroubleKind kind) =>
-        kind == ModelTroubleKind.TooSlow ? SlowProbeEvery : CheapProbeEvery;
+    public static TimeSpan ProbeEveryFor(ModelTroubleKind kind) => kind switch
+    {
+        // 探测本身就是一次全尺寸判定，慢模型上一探就是一分钟 —— 稀一点。
+        ModelTroubleKind.TooSlow => SlowProbeEvery,
+
+        // 网断着的时候探测会立刻失败（发不出去），但"网回来了没有"只能靠它认出来。
+        // 两分钟一次足够，而且真去探之前会先问一句有没有网（见 ModelSupervisor.ProbeAsync）。
+        ModelTroubleKind.Offline => SlowProbeEvery,
+
+        _ => CheapProbeEvery,
+    };
 
     /// <summary>
     /// 走一轮检查。返回 <see cref="PacingStep.Alert"/> 表示"现在该弹全屏了"。
@@ -167,6 +180,12 @@ public sealed class ModelAlertPacing
                 return PacingStep.Nothing;
             }
         }
+
+        // **网断着的时候不催。** 网站自己也打不开，没什么可拦的；这时候每 30 秒弹一次全屏
+        // 只会把人训练成"看见提醒就关掉"，而那个习惯一旦养成，真正该看的那条也就不起作用了。
+        // 探测照旧（上面那段），网一回来该吵的会接着吵。
+        if (kind == ModelTroubleKind.Offline)
+            return PacingStep.Nothing;
 
         if (Elapsed(_shown) < RepeatEvery)
             return PacingStep.Nothing;

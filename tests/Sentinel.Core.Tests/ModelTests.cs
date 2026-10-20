@@ -498,6 +498,86 @@ public class ModelTests
         }
     }
 
+    [Fact]
+    public async Task 没网的时候一个请求都不发()
+    {
+        // 用户的原话："本身网络没通的情况下，也会不断弹出 60 秒超时的全屏提示。"
+        // 网断着，这一次判定必然是白等（要么立刻失败、要么挂满 60 秒），所以干脆别发 ——
+        // 而它的后果归"没网"这一类，安静处理（见 ModelTroubleKind.Offline）。
+        var provider = Provider(ApiFormat.OpenAi);   // 公网地址
+
+        var config = new AppConfig();
+        config.Models.Add(provider);
+        config.ActiveModelId = provider.Id;
+
+        var handler = new SwitchHandler();
+        var now = new DateTimeOffset(2026, 10, 20, 9, 0, 0, TimeSpan.FromHours(8));
+
+        var supervisor = new ModelSupervisor(
+            () => config,
+            new ModelClient(new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(10) }),
+            new Connectivity(probe: _ => Task.FromResult(false), now: () => now));
+
+        supervisor.Request("r", "禁令", Snapshot());
+        await WaitUntil(() => supervisor.BlockingKind == ModelTroubleKind.Offline);
+
+        Assert.Equal(0, handler.Attempts);       // 一次都没发出去 —— 那 60 秒的挂起不会发生
+        Assert.NotNull(supervisor.BlockingIssue);
+    }
+
+    [Fact]
+    public async Task 有网但是超时_那是服务商的事_照样要吵()
+    {
+        // 反过来那一半：网是通的，只是模型慢到拿不到判定 —— 这时网站打得开、他照样能刷，
+        // 所以必须吵，而且话要说"换模型/换服务商"。
+        var provider = Provider(ApiFormat.OpenAi);
+
+        var config = new AppConfig();
+        config.Models.Add(provider);
+        config.ActiveModelId = provider.Id;
+
+        var supervisor = new ModelSupervisor(
+            () => config,
+            new ModelClient(new HttpClient(new SlowHandler()) { Timeout = TimeSpan.FromMilliseconds(200) }),
+            new Connectivity(probe: _ => Task.FromResult(true)));
+
+        supervisor.Request("r", "禁令", Snapshot());
+        await WaitUntil(() => supervisor.BlockingKind != ModelTroubleKind.None);
+
+        Assert.Equal(ModelTroubleKind.TooSlow, supervisor.BlockingKind);
+        Assert.NotNull(supervisor.BlockingIssue);
+    }
+
+    [Fact]
+    public async Task 网回来之后会自己恢复()
+    {
+        // 断网期间安静，但不能永远安静：网一回来，探测就该认出模型还能干活、把状态清掉。
+        var provider = Provider(ApiFormat.OpenAi);
+
+        var config = new AppConfig();
+        config.Models.Add(provider);
+        config.ActiveModelId = provider.Id;
+
+        var now = new DateTimeOffset(2026, 10, 20, 9, 0, 0, TimeSpan.FromHours(8));
+        var online = false;
+
+        var handler = new SwitchHandler();
+        var supervisor = new ModelSupervisor(
+            () => config,
+            new ModelClient(new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(10) }),
+            new Connectivity(probe: _ => Task.FromResult(online), now: () => now));
+
+        supervisor.Request("r", "禁令", Snapshot());
+        await WaitUntil(() => supervisor.BlockingKind == ModelTroubleKind.Offline);
+
+        online = true;
+        now = now.AddMinutes(1);   // 让那 30 秒的连通性缓存过期
+
+        Assert.True(await supervisor.ProbeAsync());
+        Assert.Equal(ModelTroubleKind.None, supervisor.BlockingKind);
+        Assert.Null(supervisor.BlockingIssue);
+    }
+
     private static async Task WaitUntil(Func<bool> condition)
     {
         for (var i = 0; i < 60 && !condition(); i++)
