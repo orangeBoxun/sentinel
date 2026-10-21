@@ -176,7 +176,12 @@ public sealed class MonitorLoop
                 if (!TargetMatcher.Matches(target, window))
                     continue;
 
-                if (!IsWorthReading(window))
+                // **宽限期正在走的那一轮必须接着算。**我们的全屏提醒会盖住被拦的那个窗口 ——
+                // 如果"看不见就不读"，宽限期就永远走不完：提醒已经说出口了，而操作永远不执行。
+                // 最小化的除外：人把它收起来了，那是不再看它。
+                var pending = _controller.HasPendingEpisode(Key(target, window));
+
+                if (!IsWorthReading(window) && !(pending && !window.IsMinimized))
                 {
                     RememberWindowState(target, window);
                     continue;
@@ -409,7 +414,13 @@ public sealed class MonitorLoop
 
         // Each of these ends the previous episode and starts a fresh one, so none of them may wait out
         // a cooldown: a cooldown exists to stop a storm, not to excuse a second attempt.
-        if (reopened || revealed || returned || repeatDue)
+        //
+        // **但正在走宽限期的那一轮不撤销**（"从最小化恢复"除外，那确实是一次新的尝试）：
+        // 那几秒里窗口可能只是被*我们自己的全屏提醒*盖住又露出来，撤掉它就等于把"3 秒后执行"
+        // 这句话收回去 —— 下一轮再弹一次，用户看到的就是一直弹、不执行。
+        var pending = _controller.HasPendingEpisode(controllerKey);
+
+        if (reopened || (!pending && (revealed || returned || repeatDue)))
             _controller.Clear(controllerKey);
 
         // Record the live window state on every path — a later restore or return is only detectable

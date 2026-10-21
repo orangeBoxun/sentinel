@@ -31,6 +31,9 @@ public sealed class ActionController
         public DateTimeOffset? LastEnforcedAt;
         public bool Notified;
 
+        /// <summary>宽限期里连续几轮"这一轮不违规"了。见 <see cref="Decide"/>。</summary>
+        public int Misses;
+
         /// <summary>Hits handled for this key since the run started. Survives episode resets.</summary>
         public int Episodes;
     }
@@ -104,10 +107,22 @@ public sealed class ActionController
         // Content is fine again: end the episode so a later hit starts fresh. The hit count is kept —
         // it answers "how many times has this been stopped", and resetting it every time the user
         // navigates away and back would make the number meaningless.
+        //
+        // **一次不够。**宽限期里只要有一轮"这一轮不违规"就撤销，会踩一个很难看的坑：模型规则下，
+        // 同一个页面的两次判定本来就可能一个说违规、一个说不违规（正文一直在动），于是宽限期每
+        // 一轮都被撤销一次、每一轮都重新弹一次"即将执行" —— 而操作永远走不到执行那一步。
+        // 用户看到的就是"提醒每秒弹一次，窗口一直不关"。连着两轮都不违规才说明它真的走开了。
         if (!isBlocked)
         {
             if (_states.TryGetValue(key, out var existing))
+            {
+                existing.Misses++;
+
+                if (existing.EpisodeStart is not null && existing.Misses < 2)
+                    return ActionDecision.None;
+
                 ResetEpisode(existing);
+            }
 
             return ActionDecision.None;
         }
@@ -118,6 +133,7 @@ public sealed class ActionController
             _states[key] = state;
         }
 
+        state.Misses = 0;
         state.ConsecutiveHits++;
 
         // Debounce: require N consecutive blocked polls before reacting.
@@ -163,5 +179,6 @@ public sealed class ActionController
         state.EpisodeStart = null;
         state.Notified = false;
         state.ConsecutiveHits = 0;
+        state.Misses = 0;
     }
 }

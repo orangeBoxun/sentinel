@@ -261,6 +261,37 @@ public class MonitorLoopTests
     }
 
     [Fact]
+    public void 被自己的全屏提醒盖住_宽限期照样走完并执行()
+    {
+        // 全屏提醒会把被拦的那个窗口整个盖住。如果"看不见就不读"，宽限期就永远走不完 ——
+        // 提醒已经说出口了（"3 秒后执行"），操作却永远不执行。用户报的就是这个：
+        // "一直弹一直弹，始终就是不执行操作"。
+        var config = ConfigWith("bilibili", new[] { ActionType.Notify, ActionType.Close }, grace: 3);
+        var reader = new MutableReader
+        {
+            Snapshot = new ContentSnapshot("https://bilibili.com", "首页", null, DateTimeOffset.Now),
+        };
+        var windows = new MutableEnumerator();
+        windows.Windows.Add(Browser);
+
+        var action = new RecordingAction();
+        var loop = BuildLoop(config, reader, action, enumerator: windows);
+        var t0 = new DateTimeOffset(2026, 1, 1, 10, 0, 0, TimeSpan.Zero);
+
+        Assert.Equal(ActionStage.Notify, Assert.Single(loop.Tick(t0)).Stage);
+
+        // 提醒是全屏的：从这一刻起那个窗口被盖住、也不再是前台。
+        windows.Windows[0] = Browser with { IsExposed = false, IsForeground = false };
+
+        Assert.Empty(loop.Tick(t0.AddSeconds(1)));
+        Assert.Empty(loop.Tick(t0.AddSeconds(2)));
+
+        // 到点照样执行 —— 不是"因为看不见所以算了"，也不是"再弹一次"。
+        Assert.Equal(ActionStage.Enforce, Assert.Single(loop.Tick(t0.AddSeconds(3))).Stage);
+        Assert.Single(action.Calls);
+    }
+
+    [Fact]
     public void Unchanged_content_is_not_rejudged()
     {
         var config = ConfigWith("bilibili", new[] { ActionType.Close }, cooldown: 0);

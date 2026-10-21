@@ -203,15 +203,39 @@ public class ActionControllerTests
     }
 
     [Fact]
-    public void Allow_resets_episode()
+    public void 一次不违规不撤宽限期_到点照样执行()
     {
+        // 踩过的坑：模型规则下，同一个页面的两次判定可能一个说违规、一个说不违规（正文一直在动）。
+        // 以前一次"不违规"就撤销宽限期，于是每一轮都重新弹一次"即将执行"，而操作永远走不到
+        // 执行那一步 —— 用户看到的就是"每秒弹一次提醒，窗口一直不关"。
+        var ctl = new ActionController();
+        var policy = new Policy { DebounceCount = 1, GraceSeconds = 10, CooldownSeconds = 0 };
+        var t0 = new DateTimeOffset(2026, 1, 1, 10, 0, 0, TimeSpan.Zero);
+
+        Assert.Equal(ActionStage.Notify, ctl.Decide("k", true, policy, t0).Stage);
+
+        // 中间闪了一下"不违规"：不能因此重来
+        Assert.Equal(ActionStage.None, ctl.Decide("k", false, policy, t0.AddSeconds(3)).Stage);
+        Assert.Equal(ActionStage.None, ctl.Decide("k", true, policy, t0.AddSeconds(4)).Stage);
+
+        // 到点执行，而不是再弹一次
+        Assert.Equal(ActionStage.Enforce, ctl.Decide("k", true, policy, t0.AddSeconds(10)).Stage);
+    }
+
+    [Fact]
+    public void 连着两轮不违规才算真的走开()
+    {
+        // 两轮都判"不违规"才说明人真的换页了；那时撤销，别再动手。
         var ctl = new ActionController();
         var policy = new Policy { DebounceCount = 1, GraceSeconds = 10, CooldownSeconds = 0 };
         var t0 = new DateTimeOffset(2026, 1, 1, 10, 0, 0, TimeSpan.Zero);
 
         Assert.Equal(ActionStage.Notify, ctl.Decide("k", true, policy, t0).Stage);
         Assert.Equal(ActionStage.None, ctl.Decide("k", false, policy, t0.AddSeconds(3)).Stage);
-        Assert.Equal(ActionStage.Notify, ctl.Decide("k", true, policy, t0.AddSeconds(4)).Stage);
+        Assert.Equal(ActionStage.None, ctl.Decide("k", false, policy, t0.AddSeconds(4)).Stage);
+
+        // 撤掉之后，再命中就是新的一轮（而不是接着上一轮执行）
+        Assert.Equal(ActionStage.Notify, ctl.Decide("k", true, policy, t0.AddSeconds(5)).Stage);
     }
 
     [Fact]
