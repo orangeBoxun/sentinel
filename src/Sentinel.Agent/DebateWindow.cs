@@ -54,8 +54,23 @@ public sealed class DebateWindow : Window
     };
 
     private readonly Button _start = new() { Content = "开始讨论", Padding = new Thickness(18, 6, 18, 6) };
+    private readonly Button _stop = new()
+    {
+        Content = "停止", Padding = new Thickness(18, 6, 18, 6), Margin = new Thickness(8, 0, 0, 0),
+        IsEnabled = false,
+    };
+
     private readonly Button _copy = new() { Content = "复制全部", Padding = new Thickness(18, 6, 18, 6), Margin = new Thickness(8, 0, 0, 0) };
+    private readonly Button _copyPatch = new()
+    {
+        Content = "复制补丁", Padding = new Thickness(18, 6, 18, 6), Margin = new Thickness(8, 0, 0, 0),
+        IsEnabled = false,
+    };
+
     private readonly Button _close = new() { Content = "关闭", Padding = new Thickness(18, 6, 18, 6), Margin = new Thickness(8, 0, 0, 0), IsCancel = true };
+
+    private CancellationTokenSource? _cts;
+    private string _patch = "";
 
     public DebateWindow(AgentState state, Target target, WindowRef window)
     {
@@ -82,8 +97,8 @@ public sealed class DebateWindow : Window
 
         inputs.Children.Add(new TextBlock
         {
-            Text = "让两个模型互相看对方的结论，找出**从严判断**也判错的那一方，"
-                   + "并给出一句可以直接加进禁令的话。",
+            Text = "让两个模型各自判一次，按你填的标准找出判错的那一方：判对的那一方先指出它错在哪一步，"
+                   + "再由它写补丁 —— 补丁会被真的加进禁令、重新判这一页，判不对就继续改（最多 3 轮）。",
             TextWrapping = TextWrapping.Wrap,
             Margin = new Thickness(0, 0, 0, 10),
         });
@@ -111,7 +126,7 @@ public sealed class DebateWindow : Window
         inputs.Children.Add(new TextBlock
         {
             Text = "开始时会现读一次所选窗口的内容（读到什么，日志第一行会写出来）。"
-                   + "这一项会真的发几次请求，会产生费用。",
+                   + "每一轮要发 4 次左右请求，最多 3 轮，会产生费用；中途可以点「停止」。",
             TextWrapping = TextWrapping.Wrap,
             Foreground = (System.Windows.Media.Brush)Application.Current.FindResource("TextSecondary"),
             Margin = new Thickness(0, 10, 0, 0),
@@ -128,7 +143,9 @@ public sealed class DebateWindow : Window
 
         DockPanel.SetDock(buttons, Dock.Bottom);
         buttons.Children.Add(_start);
+        buttons.Children.Add(_stop);
         buttons.Children.Add(_copy);
+        buttons.Children.Add(_copyPatch);
         buttons.Children.Add(_close);
         root.Children.Add(buttons);
 
@@ -147,8 +164,15 @@ public sealed class DebateWindow : Window
 
         _refreshWindows.Click += (_, _) => RefreshWindowChoices();
         _start.Click += async (_, _) => await RunAsync();
+        _stop.Click += (_, _) => _cts?.Cancel();
         _copy.Click += (_, _) => Clipboard.SetText(_log.Text);
+        _copyPatch.Click += (_, _) =>
+        {
+            if (_patch.Length > 0)
+                Clipboard.SetText(_patch);
+        };
         _close.Click += (_, _) => Close();
+        Closed += (_, _) => _cts?.Cancel();
 
         return root;
     }
@@ -254,6 +278,11 @@ public sealed class DebateWindow : Window
         _log.Clear();
         _start.IsEnabled = false;
         _copy.IsEnabled = false;
+        _copyPatch.IsEnabled = false;
+        _stop.IsEnabled = true;
+        _patch = "";
+
+        _cts = new CancellationTokenSource();
 
         try
         {
@@ -280,7 +309,7 @@ public sealed class DebateWindow : Window
 
             var debate = new ModelDebate(usage: _state.Monitor.Usage);
 
-            await debate.RunAsync(
+            var outcome = await debate.RunAsync(
                 providerA,
                 providerB,
                 string.Join("\n", instruction),
@@ -288,7 +317,14 @@ public sealed class DebateWindow : Window
                 opinion,
                 _reason.Text.Trim(),
                 line => Dispatcher.Invoke(() => Append(line)),
-                CancellationToken.None);
+                _cts.Token);
+
+            if (outcome is not null && outcome.Patch.Count > 0)
+            {
+                _patch = outcome.Text;
+                _copyPatch.IsEnabled = true;
+                _copyPatch.Content = outcome.Verified ? "复制补丁" : "复制候选（未验证）";
+            }
         }
         catch (Exception ex)
         {
@@ -298,6 +334,9 @@ public sealed class DebateWindow : Window
         {
             _start.IsEnabled = true;
             _copy.IsEnabled = true;
+            _stop.IsEnabled = false;
+            _cts?.Dispose();
+            _cts = null;
         }
     }
 
