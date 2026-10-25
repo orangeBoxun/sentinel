@@ -82,7 +82,8 @@ public sealed class DebateWindow : Window
 
         inputs.Children.Add(new TextBlock
         {
-            Text = "让两个模型互相看对方的结论，找出更可能判错的一方，并给出禁令的改法。",
+            Text = "让两个模型互相看对方的结论，找出**从严判断**也判错的那一方，"
+                   + "并给出一句可以直接加进禁令的话。",
             TextWrapping = TextWrapping.Wrap,
             Margin = new Thickness(0, 0, 0, 10),
         });

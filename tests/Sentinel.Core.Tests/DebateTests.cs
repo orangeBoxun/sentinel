@@ -44,11 +44,21 @@ public class DebateTests
             if (Broken.Contains(model))
                 throw new HttpRequestException("目标计算机积极拒绝，无法连接。");
 
-            var text = model == "a" ? "违规\nA 的理由：像在摸鱼" : "不违规\nB 的理由：只是搜索页";
+            // 第一轮走的是**真实判定路径**（system 里是"你是一个内容审查器"），要回 JSON 判定；
+            // 第二轮和汇总是自由文本。
+            var judging = body.Contains("内容审查器", StringComparison.Ordinal);
 
-            // 最后那次汇总（a 的第三次调用）给一段建议。
-            if (model == "a" && Calls.Count(c => c.Model == "a") >= 3)
-                text = "建议：把禁令里「搜索页不拦」写成「只有标题、没有播放内容的页面不拦」。";
+            var text = judging
+                ? model == "a"
+                    ? "[true, \"像在摸鱼\", true]"
+                    : "[false, \"只是搜索页\", false]"
+                : model == "a"
+                    ? "A 的辩论意见：我从严也漏了，因为禁令没写搜索页怎么算。"
+                    : "B 的辩论意见：我在从严那边是对的，因为……";
+
+            // 最后那次汇总（a 的第二次自由文本调用）给几条建议。
+            if (!judging && model == "a" && Calls.Count(c => c.Model == "a" && !c.Body.Contains("内容审查器", StringComparison.Ordinal)) >= 2)
+                text = "建议：追加一句「搜索结果页只有标题、没有可播放内容时不拦」。";
 
             var json = "{\"choices\":[{\"message\":{\"content\":"
                        + JsonSerializer.Serialize(text) + "}}]}";
@@ -98,27 +108,32 @@ public class DebateTests
     }
 
     [Fact]
-    public async Task 第一轮是真独立判断_不带对方的结论()
+    public async Task 第一轮真独立判断_用的是和监控同一套提示词()
     {
         var (_, handler) = await RunAsync(new ScriptedHandler());
 
-        // 第一轮（a 的第一次、b 的第一次）里不该出现对方的判断。
-        Assert.DoesNotContain("B 的理由", handler.Calls[0].Body);
-        Assert.DoesNotContain("A 的理由", handler.Calls[1].Body);
+        // 第一轮里不该出现"另一个模型的判断"，也必须是判定那套 system 提示词。
+        Assert.DoesNotContain("另一个模型", handler.Calls[0].Body);
+        Assert.DoesNotContain("另一个模型", handler.Calls[1].Body);
+        Assert.Contains("内容审查器", handler.Calls[0].Body);
     }
 
     [Fact]
-    public async Task 第二轮把对方的结论和你的看法都带进去()
+    public async Task 第二轮把对方的判断和你的看法都带进去_并点明从严才要修()
     {
         var (_, handler) = await RunAsync(new ScriptedHandler());
 
-        // A 的第二轮：要看到 B 的判断，也要看到"用户认为违规 + 理由"。
-        Assert.Contains("B 的理由", handler.Calls[2].Body);
+        // A 的第二轮：要看到 B 的两个判断，也要看到"用户认为违规 + 理由"。
+        Assert.Contains("另一个模型（B）", handler.Calls[2].Body);
+        Assert.Contains("正常「不违规」", handler.Calls[2].Body);
         Assert.Contains("用户自己认为这页「违规」", handler.Calls[2].Body);
         Assert.Contains("我在摸鱼", handler.Calls[2].Body);
 
+        // 提示词必须说清楚：从严判断只决定要不要往下问，正常判错不算问题。
+        Assert.Contains("从严判断只用来决定", handler.Calls[2].Body);
+
         // B 的第二轮：反过来看到 A 的。
-        Assert.Contains("A 的理由", handler.Calls[3].Body);
+        Assert.Contains("另一个模型（A）", handler.Calls[3].Body);
     }
 
     [Fact]
@@ -126,8 +141,8 @@ public class DebateTests
     {
         var (lines, handler) = await RunAsync(new ScriptedHandler());
 
-        Assert.Contains("A 的理由", handler.Calls[4].Body);
-        Assert.Contains("B 的理由", handler.Calls[4].Body);
+        Assert.Contains("A 的辩论意见", handler.Calls[4].Body);
+        Assert.Contains("B 的辩论意见", handler.Calls[4].Body);
 
         Assert.Contains(lines, l => !l.IsSystem && l.Text.Contains("建议"));
     }

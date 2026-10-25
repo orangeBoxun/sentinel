@@ -768,6 +768,25 @@ public class ModelTests
     }
 
     [Fact]
+    public async Task 最后一个模型的从严判断不影响结果_只看正常判断()
+    {
+        // 链上只有一个模型：它正常说"不违规"、从严说"违规"（不一致）。
+        // 不一致只意味着"该交给下一个"，可后面没人了 —— 所以直接用它的正常判断：放行。
+        var config = ChainConfig(("only", false));
+
+        var handler = new PerModelHandler(
+            new() { ["only"] = false },
+            new() { ["only"] = true });
+
+        var supervisor = ChainSupervisor(config, handler);
+
+        supervisor.Request("r", "禁令", Snapshot());
+        await WaitUntil(() => supervisor.Lookup("r", Snapshot()).Kind == ModelVerdictKind.Allowed);
+
+        Assert.Equal(new[] { "only" }, handler.Asked);
+    }
+
+    [Fact]
     public async Task 模型没给从严值_当作拿不准继续问()
     {
         var config = ChainConfig(("cheap", false), ("expensive", true));
