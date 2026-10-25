@@ -859,6 +859,21 @@
                                        Text="按服务商统计判定请求。token 只统计服务商自己回的 usage —— 有的中转站不回，那部分只记请求数。数据存在日志目录的 usage.json 里。" />
 
                             <WrapPanel Margin="0,14,0,0">
+                                <TextBlock Text="时间" VerticalAlignment="Center" Margin="0,0,6,0"
+                                           Foreground="{StaticResource TextSecondary}" />
+                                <ComboBox x:Name="UsageRangeBox" DisplayMemberPath="Display" Width="110"
+                                          Margin="0,0,14,0" SelectionChanged="UsageFilter_Changed" />
+
+                                <TextBlock Text="供应商" VerticalAlignment="Center" Margin="0,0,6,0"
+                                           Foreground="{StaticResource TextSecondary}" />
+                                <ComboBox x:Name="UsageProviderBox" DisplayMemberPath="Display" Width="170"
+                                          Margin="0,0,14,0" SelectionChanged="UsageFilter_Changed" />
+
+                                <TextBlock Text="指标" VerticalAlignment="Center" Margin="0,0,6,0"
+                                           Foreground="{StaticResource TextSecondary}" />
+                                <ComboBox x:Name="UsageMetricBox" DisplayMemberPath="Display" Width="110"
+                                          Margin="0,0,14,0" SelectionChanged="UsageFilter_Changed" />
+
                                 <Button Style="{StaticResource ToolIconButton}" Tag="{StaticResource IconRefresh}"
                                         Content="刷新" Click="RefreshUsage_Click" />
                             </WrapPanel>
@@ -869,46 +884,85 @@
 
                         <ScrollViewer Margin="0,16,0,0" VerticalScrollBarVisibility="Auto">
                             <StackPanel>
-                                <Grid Margin="14,0,14,8">
+                                <!-- 折线：每天 -->
+                                <Border Style="{StaticResource Card}" Margin="0,0,0,14">
+                                    <StackPanel>
+                                        <TextBlock Style="{StaticResource H2}" x:Name="UsageLineTitle" Text="每天" />
+                                        <WrapPanel x:Name="UsageLineLegend" Margin="0,10,0,6" />
+                                        <Canvas x:Name="UsageLineChart" Height="200" ClipToBounds="True"
+                                                SizeChanged="UsageCanvas_SizeChanged" />
+                                    </StackPanel>
+                                </Border>
+
+                                <!-- 柱状 + 饼 -->
+                                <Grid Margin="0,0,0,14">
                                     <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="2*" />
                                         <ColumnDefinition Width="*" />
-                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="14" />
                                         <ColumnDefinition Width="*" />
                                     </Grid.ColumnDefinitions>
-                                    <TextBlock Grid.Column="0" Text="服务商" Style="{StaticResource Caption}" />
-                                    <TextBlock Grid.Column="1" Text="今天" Style="{StaticResource Caption}" />
-                                    <TextBlock Grid.Column="2" Text="近 7 天" Style="{StaticResource Caption}" />
-                                    <TextBlock Grid.Column="3" Text="近 30 天" Style="{StaticResource Caption}" />
+
+                                    <Border Grid.Column="0" Style="{StaticResource Card}">
+                                        <StackPanel>
+                                            <TextBlock Style="{StaticResource H2}" x:Name="UsageBarTitle" Text="各服务商合计" />
+                                            <Canvas x:Name="UsageBarChart" Height="180" Margin="0,10,0,0" ClipToBounds="True"
+                                                    SizeChanged="UsageCanvas_SizeChanged" />
+                                        </StackPanel>
+                                    </Border>
+
+                                    <Border Grid.Column="2" Style="{StaticResource Card}">
+                                        <StackPanel>
+                                            <TextBlock Style="{StaticResource H2}" x:Name="UsagePieTitle" Text="占比" />
+                                            <Canvas x:Name="UsagePieChart" Height="180" Margin="0,10,0,0" ClipToBounds="True"
+                                                    SizeChanged="UsageCanvas_SizeChanged" />
+                                        </StackPanel>
+                                    </Border>
                                 </Grid>
 
-                                <ItemsControl x:Name="UsageList">
-                                    <ItemsControl.ItemTemplate>
-                                        <DataTemplate>
-                                            <Border CornerRadius="8" Padding="14,10" Margin="0,0,0,10"
-                                                    Background="{StaticResource Surface}"
-                                                    BorderBrush="{StaticResource Hairline}" BorderThickness="1">
-                                                <Grid>
-                                                    <Grid.ColumnDefinitions>
-                                                        <ColumnDefinition Width="2*" />
-                                                        <ColumnDefinition Width="*" />
-                                                        <ColumnDefinition Width="*" />
-                                                        <ColumnDefinition Width="*" />
-                                                    </Grid.ColumnDefinitions>
-                                                    <TextBlock Grid.Column="0" Text="{Binding Name}" FontSize="15"
-                                                               Foreground="{StaticResource TextPrimary}"
-                                                               VerticalAlignment="Center" />
-                                                    <TextBlock Grid.Column="1" Text="{Binding Today}"
-                                                               Style="{StaticResource Caption}" VerticalAlignment="Center" />
-                                                    <TextBlock Grid.Column="2" Text="{Binding Week}"
-                                                               Style="{StaticResource Caption}" VerticalAlignment="Center" />
-                                                    <TextBlock Grid.Column="3" Text="{Binding Month}"
-                                                               Style="{StaticResource Caption}" VerticalAlignment="Center" />
-                                                </Grid>
-                                            </Border>
-                                        </DataTemplate>
-                                    </ItemsControl.ItemTemplate>
-                                </ItemsControl>
+                                <!-- 明细表 -->
+                                <Border Style="{StaticResource Card}">
+                                    <StackPanel>
+                                        <Grid Margin="0,0,0,8">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="2*" />
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="*" />
+                                                <ColumnDefinition Width="*" />
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock Grid.Column="0" Text="服务商" Style="{StaticResource Caption}" />
+                                            <TextBlock Grid.Column="1" Text="今天" Style="{StaticResource Caption}" />
+                                            <TextBlock Grid.Column="2" Text="近 7 天" Style="{StaticResource Caption}" />
+                                            <TextBlock Grid.Column="3" Text="近 30 天" Style="{StaticResource Caption}" />
+                                        </Grid>
+
+                                        <ItemsControl x:Name="UsageList">
+                                            <ItemsControl.ItemTemplate>
+                                                <DataTemplate>
+                                                    <Border CornerRadius="8" Padding="0,8" Margin="0,0,0,4"
+                                                            Background="Transparent">
+                                                        <Grid>
+                                                            <Grid.ColumnDefinitions>
+                                                                <ColumnDefinition Width="2*" />
+                                                                <ColumnDefinition Width="*" />
+                                                                <ColumnDefinition Width="*" />
+                                                                <ColumnDefinition Width="*" />
+                                                            </Grid.ColumnDefinitions>
+                                                            <TextBlock Grid.Column="0" Text="{Binding Name}" FontSize="14"
+                                                                       Foreground="{StaticResource TextPrimary}"
+                                                                       VerticalAlignment="Center" />
+                                                            <TextBlock Grid.Column="1" Text="{Binding Today}"
+                                                                       Style="{StaticResource Caption}" VerticalAlignment="Center" />
+                                                            <TextBlock Grid.Column="2" Text="{Binding Week}"
+                                                                       Style="{StaticResource Caption}" VerticalAlignment="Center" />
+                                                            <TextBlock Grid.Column="3" Text="{Binding Month}"
+                                                                       Style="{StaticResource Caption}" VerticalAlignment="Center" />
+                                                        </Grid>
+                                                    </Border>
+                                                </DataTemplate>
+                                            </ItemsControl.ItemTemplate>
+                                        </ItemsControl>
+                                    </StackPanel>
+                                </Border>
                             </StackPanel>
                         </ScrollViewer>
                     </DockPanel>

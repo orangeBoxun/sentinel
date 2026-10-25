@@ -216,7 +216,10 @@ internal static class ModelCheck
         Console.WriteLine($"调换顺序   : {string.Join(" → ", beforeOrder)}  ⇒  {string.Join(" → ", afterOrder)}");
         ok &= afterOrder.Count == 2 && afterOrder[0] == beforeOrder[1] && afterOrder[1] == beforeOrder[0];
 
-        // 「用量」页也要能画出来
+        // 「用量」页：先造两条记录，确认三张图真的画了东西
+        state.Monitor.Usage.Record("m1", 1200, 80, answered: true);
+        state.Monitor.Usage.Record("m1", null, null, answered: false);
+
         ((RadioButton)window.FindName("ModelTabUsage")!).IsChecked = true;
         Pump();
 
@@ -224,6 +227,13 @@ internal static class ModelCheck
         Console.WriteLine($"用量页     : {usageStatus}");
 
         ok &= usageStatus.Length > 0;
+
+        var line = (Canvas)window.FindName("UsageLineChart")!;
+        var bar = (Canvas)window.FindName("UsageBarChart")!;
+        var pie = (Canvas)window.FindName("UsagePieChart")!;
+
+        Console.WriteLine($"三张图     : 折线 {line.Children.Count} 个元素 / 柱状 {bar.Children.Count} / 饼 {pie.Children.Count}");
+        ok &= line.Children.Count > 0 && bar.Children.Count > 0 && pie.Children.Count > 0;
 
         // 切回「所有供应商」，确认来回切不炸
         ((RadioButton)window.FindName("ModelTabProviders")!).IsChecked = true;

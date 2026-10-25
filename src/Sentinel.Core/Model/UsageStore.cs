@@ -134,6 +134,33 @@ public sealed class UsageStore
         return total;
     }
 
+    /// <summary>
+    /// 按天摊开（含今天，往前往后补齐没有记录的那几天，值是空的）。
+    ///
+    /// <para>
+    /// 折线图要的是"每天一个点"，缺一天不能把曲线连歪，所以空的那天补一个空的统计对象。
+    /// </para>
+    /// </summary>
+    public IReadOnlyList<(string Day, IReadOnlyDictionary<string, UsageCounters> Providers)> Daily(int days)
+    {
+        var today = DateTimeOffset.Now.Date;
+        var result = new List<(string, IReadOnlyDictionary<string, UsageCounters>)>();
+
+        lock (_gate)
+        {
+            for (var offset = days - 1; offset >= 0; offset--)
+            {
+                var day = today.AddDays(-offset).ToString("yyyy-MM-dd");
+
+                result.Add(_days.TryGetValue(day, out var providers)
+                    ? (day, providers)
+                    : (day, new Dictionary<string, UsageCounters>(StringComparer.Ordinal)));
+            }
+        }
+
+        return result;
+    }
+
     private void Prune()
     {
         var oldest = DateTimeOffset.Now.Date.AddDays(-KeepDays).ToString("yyyy-MM-dd");

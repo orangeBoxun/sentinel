@@ -2049,9 +2049,156 @@ public partial class MainWindow : Window
 
     // ------------------------------------------------------------------ 用量
 
+    private bool _usageFiltersBuilt;
+    private bool _buildingUsageFilters;
+
     private void RefreshUsage_Click(object sender, RoutedEventArgs e) => RefreshUsage();
 
+    private void UsageFilter_Changed(object sender, SelectionChangedEventArgs e)
+    {
+        if (!_buildingUsageFilters && _usageFiltersBuilt)
+            RenderUsage();
+    }
+
+    private void UsageCanvas_SizeChanged(object sender, SizeChangedEventArgs e)
+    {
+        if (_usageFiltersBuilt)
+            RenderUsage();
+    }
+
     private void RefreshUsage()
+    {
+        BuildUsageFilters();
+        RenderUsage();
+        RefreshUsageTable();
+    }
+
+    private void BuildUsageFilters()
+    {
+        if (_usageFiltersBuilt)
+            return;
+
+        _buildingUsageFilters = true;
+
+        try
+        {
+            UsageRangeBox.ItemsSource = new List<Choice<int>>
+            {
+                new(1, "今天"),
+                new(7, "近 7 天"),
+                new(30, "近 30 天"),
+            };
+
+            UsageRangeBox.SelectedIndex = 1;
+
+            var providers = new List<Choice<string?>> { new(null, "全部") };
+            providers.AddRange(_state.Config.Models.Select(m => new Choice<string?>(m.Id, m.Name)));
+
+            UsageProviderBox.ItemsSource = providers;
+            UsageProviderBox.SelectedIndex = 0;
+
+            UsageMetricBox.ItemsSource = new List<Choice<string>>
+            {
+                new("requests", "请求数"),
+                new("failures", "失败数"),
+                new("tokens", "token"),
+            };
+
+            UsageMetricBox.SelectedIndex = 0;
+
+            _usageFiltersBuilt = true;
+        }
+        finally
+        {
+            _buildingUsageFilters = false;
+        }
+    }
+
+    private void RenderUsage()
+    {
+        var store = _state.Monitor.Usage;
+
+        var days = (UsageRangeBox.SelectedItem as Choice<int>)?.Value ?? 7;
+        var metric = (UsageMetricBox.SelectedItem as Choice<string>)?.Value ?? "requests";
+        var metricLabel = (UsageMetricBox.SelectedItem as Choice<string>)?.Display ?? "请求数";
+        var providerId = (UsageProviderBox.SelectedItem as Choice<string?>)?.Value;
+
+        var daily = store.Daily(days);
+
+        var ids = daily
+            .SelectMany(d => d.Providers.Keys)
+            .Distinct()
+            .OrderBy(id => id, StringComparer.Ordinal)
+            .ToList();
+
+        var shown = providerId is null ? ids : ids.Where(id => id == providerId).ToList();
+
+        string NameOf(string id) =>
+            _state.Config.Models.FirstOrDefault(m => m.Id == id)?.Name ?? $"(已删除：{id})";
+
+        double MetricOf(Sentinel.Core.Model.UsageCounters c) => metric switch
+        {
+            "failures" => c.Failures,
+            "tokens" => c.PromptTokens + c.CompletionTokens,
+            _ => c.Requests,
+        };
+
+        double ValueOn(string id, (string Day, IReadOnlyDictionary<string, Sentinel.Core.Model.UsageCounters> Providers) day) =>
+            day.Providers.TryGetValue(id, out var counters) ? MetricOf(counters) : 0;
+
+        var labels = daily.Select(d => d.Day.Length >= 10 ? d.Day[5..] : d.Day).ToList();
+
+        var series = shown
+            .Select((id, index) => new Charts.Series(
+                NameOf(id), Charts.ColorOf(index), daily.Select(d => ValueOn(id, d)).ToArray()))
+            .ToList();
+
+        UsageLineTitle.Text = $"每天（{metricLabel}）";
+        UsageBarTitle.Text = $"各服务商合计（{metricLabel}）";
+        UsagePieTitle.Text = $"占比（{metricLabel}）";
+
+        Charts.Line(UsageLineChart, labels, series);
+
+        UsageLineLegend.Children.Clear();
+
+        foreach (var item in series)
+        {
+            var entry = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 0, 18, 4) };
+
+            entry.Children.Add(new System.Windows.Shapes.Ellipse
+            {
+                Width = 8,
+                Height = 8,
+                Fill = item.Brush,
+                Margin = new Thickness(0, 0, 6, 0),
+                VerticalAlignment = VerticalAlignment.Center,
+            });
+
+            entry.Children.Add(new TextBlock
+            {
+                Text = item.Name,
+                FontSize = 12,
+                Foreground = (System.Windows.Media.Brush)FindResource("TextSecondary"),
+                VerticalAlignment = VerticalAlignment.Center,
+            });
+
+            UsageLineLegend.Children.Add(entry);
+        }
+
+        var totals = shown
+            .Select(id => (Label: NameOf(id), Value: daily.Sum(d => ValueOn(id, d))))
+            .ToList();
+
+        Charts.Bars(UsageBarChart, totals);
+        Charts.Pie(UsagePieChart, totals);
+
+        ModelUsageStatus.Text = totals.Sum(t => t.Value) <= 0
+            ? "这个范围内还没有用量记录 —— 模型监督判过一次之后这里才有数据。"
+            : "一次判定请求算一次；「失败」是没拿到判定的那些（超时、连不上、5xx、格式看不懂）。"
+              + "token 只统计服务商回了 usage 的请求。";
+    }
+
+    private void RefreshUsageTable()
     {
         var store = _state.Monitor.Usage;
 
@@ -2089,11 +2236,6 @@ public partial class MainWindow : Window
         }
 
         UsageList.ItemsSource = rows;
-
-        ModelUsageStatus.Text = rows.Count == 0
-            ? "还没有用量记录 —— 模型监督判过一次之后这里才有数据。"
-            : "说明：一次判定请求算一次；「失败」是没拿到判定的那些（超时、连不上、5xx、格式看不懂）。"
-              + "「无用量」表示服务商没有回 usage 字段。";
     }
 
     private static Sentinel.Core.Model.UsageCounters Sum(IReadOnlyDictionary<string, Sentinel.Core.Model.UsageCounters> from)

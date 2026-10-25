@@ -73,6 +73,19 @@ public sealed class UsageTests : IDisposable
     }
 
     [Fact]
+    public void 按天摊开_没有记录的那几天也占一格()
+    {
+        var store = new UsageStore(_path);
+        store.Record("a", 10, 5, answered: true);
+
+        var daily = store.Daily(7);
+
+        Assert.Equal(7, daily.Count);
+        Assert.NotEmpty(daily[^1].Providers);            // 最后一天是今天，有数据
+        Assert.All(daily.Take(6), d => Assert.Empty(d.Providers));
+    }
+
+    [Fact]
     public void 文件坏了就当没有_不影响监控()
     {
         Directory.CreateDirectory(Path.GetDirectoryName(_path)!);
