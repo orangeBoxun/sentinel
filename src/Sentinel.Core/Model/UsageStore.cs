@@ -66,6 +66,47 @@ public sealed class UsageStore
         _days = Load(path);
     }
 
+    /// <summary>
+    /// 老版本按天存（键是 "yyyy-MM-dd"，没有小时）。按小时取数时会漏掉它们，
+    /// 于是"表格 6 次、图上 2 次"。统一归到那天的 00:00：数字对得上；
+    /// 那几条的具体时刻本来就没记，无从还原。
+    /// </summary>
+    private static Dictionary<string, Dictionary<string, UsageCounters>> Normalize(
+        Dictionary<string, Dictionary<string, UsageCounters>> loaded)
+    {
+        var normalized = new Dictionary<string, Dictionary<string, UsageCounters>>(StringComparer.Ordinal);
+
+        foreach (var (key, providers) in loaded)
+        {
+            var bucket = key.Length == 10 ? key + "T00" : key;
+
+            if (!normalized.TryGetValue(bucket, out var target))
+            {
+                normalized[bucket] = providers;
+                continue;
+            }
+
+            foreach (var (id, counters) in providers)
+            {
+                if (!target.TryGetValue(id, out var sum))
+                {
+                    target[id] = counters;
+                    continue;
+                }
+
+                sum.Requests += counters.Requests;
+                sum.Failures += counters.Failures;
+                sum.PromptTokens += counters.PromptTokens;
+                sum.CompletionTokens += counters.CompletionTokens;
+                sum.Reported += counters.Reported;
+                sum.CachedTokens += counters.CachedTokens;
+                sum.CacheReported += counters.CacheReported;
+            }
+        }
+
+        return normalized;
+    }
+
     /// <summary>记一次调用。没拿到判定的那次也记 —— 失败次数本身就是有用的信息。</summary>
     public void Record(string providerId, int? promptTokens, int? completionTokens, bool answered,
                        int? cachedTokens = null)
@@ -250,15 +291,8 @@ public sealed class UsageStore
 
             var loaded = JsonSerializer.Deserialize<Dictionary<string, Dictionary<string, UsageCounters>>>(File.ReadAllText(path), Options);
 
-            if (loaded is null)
-                return new Dictionary<string, Dictionary<string, UsageCounters>>(StringComparer.Ordinal);
-
-            // 老版本按天存的桶（键只有 10 位）没有时段信息，按小时看时对不上、按天看时又和
-            // 新数据混在一起 —— 干脆不读：统计从装上这版之后重新开始，不猜那几条是几点。
-            foreach (var key in loaded.Keys.Where(k => k.Length <= 10).ToList())
-                loaded.Remove(key);
-
-            return loaded;
+            return loaded is null ? new Dictionary<string, Dictionary<string, UsageCounters>>(StringComparer.Ordinal)
+                                  : Normalize(loaded);
         }
         catch
         {

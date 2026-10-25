@@ -86,6 +86,26 @@ public sealed class UsageTests : IDisposable
     }
 
     [Fact]
+    public void 老版本按天存的记录_归到当天零点_两边数字对得上()
+    {
+        // 用户报的："柱状图 2 次、表格 6 次" —— 4 次来自上一版按天存的桶，按小时的图不认识。
+        Directory.CreateDirectory(Path.GetDirectoryName(_path)!);
+        File.WriteAllText(_path,
+            "{\"2026-10-25\":{\"a\":{\"Requests\":4,\"Failures\":0,"
+            + "\"PromptTokens\":40,\"CompletionTokens\":8,\"Reported\":4}}}");
+
+        var store = new UsageStore(_path);
+
+        // 按天的汇总读得到
+        Assert.Equal(4, store.Since(1).GetValueOrDefault("a")!.Requests);
+
+        // 按小时的那张图也读得到（落在 00:00 那一格），不会"图上少一截"
+        var hourly = store.Hourly();
+        Assert.Equal("00:00", hourly[0].Slot);
+        Assert.Equal(4, hourly[0].Providers["a"].Requests);
+    }
+
+    [Fact]
     public void 文件坏了就当没有_不影响监控()
     {
         Directory.CreateDirectory(Path.GetDirectoryName(_path)!);

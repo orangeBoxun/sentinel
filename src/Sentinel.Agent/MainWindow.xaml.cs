@@ -2260,7 +2260,7 @@ public partial class MainWindow : Window
         ModelUsageStatus.Text = totals.Sum(t => t.Value) <= 0
             ? "这个范围内还没有用量记录 —— 模型监督判过一次之后这里才有数据。"
             : "一次判定请求算一次；「失败」是没拿到判定的那些（超时、连不上、5xx、格式看不懂）。"
-              + "token 只统计服务商回了 usage 的请求。";
+              + "token 只统计服务商回了 usage 的请求；升级前没有时段信息的记录算在 00:00。";
     }
 
     private void RefreshUsageTable()
