@@ -107,11 +107,19 @@ public sealed class ModelSupervisor : IModelSupervisor
     /// <summary>判断"这台机器现在有没有网" —— 用来把"你这边断了"和"服务商不给你用"分开。</summary>
     private readonly Connectivity _connectivity;
 
-    public ModelSupervisor(Func<AppConfig> config, ModelClient? client = null, Connectivity? connectivity = null)
+    /// <summary>用量统计。null = 不记（测试和某些宿主）。</summary>
+    private readonly UsageStore? _usage;
+
+    public ModelSupervisor(
+        Func<AppConfig> config,
+        ModelClient? client = null,
+        Connectivity? connectivity = null,
+        UsageStore? usage = null)
     {
         _config = config;
         _client = client ?? new ModelClient();
         _connectivity = connectivity ?? new Connectivity();
+        _usage = usage;
     }
 
     /// <summary>
@@ -281,6 +289,9 @@ public sealed class ModelSupervisor : IModelSupervisor
                     var result = await _client
                         .JudgeAsync(provider, ProbeInstruction(), ProbeSnapshot(), CancellationToken.None)
                         .ConfigureAwait(false);
+
+                    _usage?.Record(provider.Id, result.PromptTokens, result.CompletionTokens,
+                        result.Outcome == ModelCallOutcome.Answered);
 
                     if (result.Outcome == ModelCallOutcome.Answered)
                         continue;
@@ -628,6 +639,9 @@ public sealed class ModelSupervisor : IModelSupervisor
                 result = new ModelCallResult(ModelCallOutcome.NoAnswer, Message: $"抛异常：{ex.Message}");
             }
 
+            _usage?.Record(provider.Id, result.PromptTokens, result.CompletionTokens,
+                result.Outcome == ModelCallOutcome.Answered);
+
             asked.Add((provider, result));
 
             // 和监控一样：有人说了违规就地停，后面的不再花钱。
@@ -683,8 +697,12 @@ public sealed class ModelSupervisor : IModelSupervisor
             }
             catch
             {
+                _usage?.Record(provider.Id, null, null, answered: false);
                 continue;   // 抛异常 = 它这次没意见
             }
+
+            _usage?.Record(provider.Id, result.PromptTokens, result.CompletionTokens,
+                result.Outcome == ModelCallOutcome.Answered);
 
             if (result.Outcome == ModelCallOutcome.Answered)
             {

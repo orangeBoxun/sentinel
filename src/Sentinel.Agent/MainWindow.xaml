@@ -664,6 +664,9 @@
                         <RadioButton x:Name="ModelTabChain" GroupName="ModelTabs"
                                      Style="{StaticResource SegmentedOption}"
                                      Content="判断链" Checked="ModelTab_Changed" />
+                        <RadioButton x:Name="ModelTabUsage" GroupName="ModelTabs"
+                                     Style="{StaticResource SegmentedOption}"
+                                     Content="用量" Checked="ModelTab_Changed" />
                     </StackPanel>
 
                     <!-- ==================== 列表（默认看到的就是它） ==================== -->
@@ -845,6 +848,68 @@
                                     </DataTemplate>
                                 </ItemsControl.ItemTemplate>
                             </ItemsControl>
+                        </ScrollViewer>
+                    </DockPanel>
+
+                    <!-- ==================== 用量（顶部第三个按钮切过来） ==================== -->
+                    <DockPanel x:Name="ModelUsageView" Grid.Row="1" Visibility="Collapsed">
+                        <StackPanel DockPanel.Dock="Top">
+                            <TextBlock Style="{StaticResource H1}" Text="用量" />
+                            <TextBlock Style="{StaticResource Hint}" Margin="0,7,0,0" TextWrapping="Wrap"
+                                       Text="按服务商统计判定请求。token 只统计服务商自己回的 usage —— 有的中转站不回，那部分只记请求数。数据存在日志目录的 usage.json 里。" />
+
+                            <WrapPanel Margin="0,14,0,0">
+                                <Button Style="{StaticResource ToolIconButton}" Tag="{StaticResource IconRefresh}"
+                                        Content="刷新" Click="RefreshUsage_Click" />
+                            </WrapPanel>
+
+                            <TextBlock x:Name="ModelUsageStatus" Style="{StaticResource Hint}"
+                                       Margin="0,12,0,0" TextWrapping="Wrap" />
+                        </StackPanel>
+
+                        <ScrollViewer Margin="0,16,0,0" VerticalScrollBarVisibility="Auto">
+                            <StackPanel>
+                                <Grid Margin="14,0,14,8">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="2*" />
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="*" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Grid.Column="0" Text="服务商" Style="{StaticResource Caption}" />
+                                    <TextBlock Grid.Column="1" Text="今天" Style="{StaticResource Caption}" />
+                                    <TextBlock Grid.Column="2" Text="近 7 天" Style="{StaticResource Caption}" />
+                                    <TextBlock Grid.Column="3" Text="近 30 天" Style="{StaticResource Caption}" />
+                                </Grid>
+
+                                <ItemsControl x:Name="UsageList">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <Border CornerRadius="8" Padding="14,10" Margin="0,0,0,10"
+                                                    Background="{StaticResource Surface}"
+                                                    BorderBrush="{StaticResource Hairline}" BorderThickness="1">
+                                                <Grid>
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="2*" />
+                                                        <ColumnDefinition Width="*" />
+                                                        <ColumnDefinition Width="*" />
+                                                        <ColumnDefinition Width="*" />
+                                                    </Grid.ColumnDefinitions>
+                                                    <TextBlock Grid.Column="0" Text="{Binding Name}" FontSize="15"
+                                                               Foreground="{StaticResource TextPrimary}"
+                                                               VerticalAlignment="Center" />
+                                                    <TextBlock Grid.Column="1" Text="{Binding Today}"
+                                                               Style="{StaticResource Caption}" VerticalAlignment="Center" />
+                                                    <TextBlock Grid.Column="2" Text="{Binding Week}"
+                                                               Style="{StaticResource Caption}" VerticalAlignment="Center" />
+                                                    <TextBlock Grid.Column="3" Text="{Binding Month}"
+                                                               Style="{StaticResource Caption}" VerticalAlignment="Center" />
+                                                </Grid>
+                                            </Border>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                            </StackPanel>
                         </ScrollViewer>
                     </DockPanel>
 

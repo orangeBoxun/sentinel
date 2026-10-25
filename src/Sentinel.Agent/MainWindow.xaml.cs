@@ -2001,13 +2001,18 @@ public partial class MainWindow : Window
             return;   // 初始化还没走完
 
         var chain = ModelTabChain.IsChecked == true;
+        var usage = ModelTabUsage.IsChecked == true;
 
-        ModelListView.Visibility = chain ? Visibility.Collapsed : Visibility.Visible;
+        ModelListView.Visibility = !chain && !usage ? Visibility.Visible : Visibility.Collapsed;
         ModelChainView.Visibility = chain ? Visibility.Visible : Visibility.Collapsed;
+        ModelUsageView.Visibility = usage ? Visibility.Visible : Visibility.Collapsed;
         ModelEditView.Visibility = Visibility.Collapsed;
 
         if (chain)
             RefreshChainList();
+
+        if (usage)
+            RefreshUsage();
     }
 
     private void RefreshChainList()
@@ -2041,6 +2046,88 @@ public partial class MainWindow : Window
 
     /// <summary>把几个供应商追加到判断链尾。弹窗和离线检查都走这里。</summary>
     public void AddProvidersToChain(IEnumerable<string> ids) => PersistChain(ModelChain().Concat(ids));
+
+    // ------------------------------------------------------------------ 用量
+
+    private void RefreshUsage_Click(object sender, RoutedEventArgs e) => RefreshUsage();
+
+    private void RefreshUsage()
+    {
+        var store = _state.Monitor.Usage;
+
+        var today = store.Since(1);
+        var week = store.Since(7);
+        var month = store.Since(30);
+
+        var ids = today.Keys
+            .Concat(week.Keys)
+            .Concat(month.Keys)
+            .Distinct()
+            .OrderBy(id => id, StringComparer.Ordinal)
+            .ToList();
+
+        var rows = new List<UsageRow>();
+
+        foreach (var id in ids)
+        {
+            var provider = _state.Config.Models.FirstOrDefault(m => m.Id == id);
+
+            rows.Add(new UsageRow(
+                provider is null ? $"(已删除：{id})" : $"{provider.Name}（{provider.Model}）",
+                FormatUsage(today.GetValueOrDefault(id)),
+                FormatUsage(week.GetValueOrDefault(id)),
+                FormatUsage(month.GetValueOrDefault(id))));
+        }
+
+        if (rows.Count > 0)
+        {
+            rows.Add(new UsageRow(
+                "合计",
+                FormatUsage(Sum(today)),
+                FormatUsage(Sum(week)),
+                FormatUsage(Sum(month))));
+        }
+
+        UsageList.ItemsSource = rows;
+
+        ModelUsageStatus.Text = rows.Count == 0
+            ? "还没有用量记录 —— 模型监督判过一次之后这里才有数据。"
+            : "说明：一次判定请求算一次；「失败」是没拿到判定的那些（超时、连不上、5xx、格式看不懂）。"
+              + "「无用量」表示服务商没有回 usage 字段。";
+    }
+
+    private static Sentinel.Core.Model.UsageCounters Sum(IReadOnlyDictionary<string, Sentinel.Core.Model.UsageCounters> from)
+    {
+        var sum = new Sentinel.Core.Model.UsageCounters();
+
+        foreach (var counters in from.Values)
+        {
+            sum.Requests += counters.Requests;
+            sum.Failures += counters.Failures;
+            sum.PromptTokens += counters.PromptTokens;
+            sum.CompletionTokens += counters.CompletionTokens;
+            sum.Reported += counters.Reported;
+        }
+
+        return sum;
+    }
+
+    private static string FormatUsage(Sentinel.Core.Model.UsageCounters? counters)
+    {
+        if (counters is null || counters.Requests == 0)
+            return "—";
+
+        var text = counters.Requests + " 次";
+
+        if (counters.Failures > 0)
+            text += $"（{counters.Failures} 失败）";
+
+        text += counters.Reported > 0
+            ? $" · {counters.PromptTokens + counters.CompletionTokens:N0} tok"
+            : " · 无用量";
+
+        return text;
+    }
 
     /// <summary>把链写回配置并保存。顺序变化是中性的，增删走放宽判定（可能要令牌）。</summary>
     private void PersistChain(IEnumerable<string> ids)

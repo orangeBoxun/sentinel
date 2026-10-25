@@ -1,0 +1,178 @@
+using System.Text.Json;
+using System.Text.Json.Serialization;
+
+namespace Sentinel.Core.Model;
+
+/// <summary>一个服务商在某一天（或某个区间）的用量。</summary>
+public sealed class UsageCounters
+{
+    /// <summary>发出去的判定请求数（成功失败都算）。</summary>
+    public int Requests { get; set; }
+
+    /// <summary>没拿到判定的次数（超时、连不上、5xx、格式看不懂）。</summary>
+    public int Failures { get; set; }
+
+    /// <summary>输入 token。服务商没回 usage 的请求不计入。</summary>
+    public long PromptTokens { get; set; }
+
+    /// <summary>输出 token。</summary>
+    public long CompletionTokens { get; set; }
+
+    /// <summary>有多少次请求真的带了 usage —— 没带的话上面两个数是偏小的。</summary>
+    public int Reported { get; set; }
+}
+
+/// <summary>
+/// 每个服务商每天用了多少 —— 请求数、失败数、token。
+///
+/// <para>
+/// 为什么要有它：判断链是"便宜的先问"省钱的，但省了多少、钱花在谁身上，界面上得看得见。
+/// 只记**服务商自己回的 usage**（OpenAI 那套的 prompt/completion，Anthropic 的 input/output）；
+/// 有的中转站根本不回 usage，那部分只能记请求数，界面上要说清楚。
+/// </para>
+/// <para>
+/// 存在日志目录里（不是配置目录）：那是用户可写的地方，这份数据也只是给人看的，
+/// 不参与任何判断。按天分桶，超过 <see cref="KeepDays"/> 天的自动丢掉。
+/// </para>
+/// </summary>
+public sealed class UsageStore
+{
+    public const string FileName = "usage.json";
+
+    /// <summary>留多少天。按天分桶，一年下来也就几百 KB。</summary>
+    private const int KeepDays = 120;
+
+    private static readonly JsonSerializerOptions Options = new()
+    {
+        WriteIndented = true,
+        PropertyNameCaseInsensitive = true,
+        Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
+    };
+
+    private readonly object _gate = new();
+    private readonly string _path;
+
+    private Dictionary<string, Dictionary<string, UsageCounters>> _days;
+
+    public UsageStore(string path)
+    {
+        _path = path;
+        _days = Load(path);
+    }
+
+    /// <summary>记一次调用。没拿到判定的那次也记 —— 失败次数本身就是有用的信息。</summary>
+    public void Record(string providerId, int? promptTokens, int? completionTokens, bool answered)
+    {
+        if (string.IsNullOrWhiteSpace(providerId))
+            return;
+
+        var day = DateTimeOffset.Now.ToString("yyyy-MM-dd");
+
+        lock (_gate)
+        {
+            if (!_days.TryGetValue(day, out var providers))
+            {
+                providers = new Dictionary<string, UsageCounters>(StringComparer.Ordinal);
+                _days[day] = providers;
+            }
+
+            if (!providers.TryGetValue(providerId, out var counters))
+            {
+                counters = new UsageCounters();
+                providers[providerId] = counters;
+            }
+
+            counters.Requests++;
+
+            if (!answered)
+                counters.Failures++;
+
+            if (promptTokens is { } prompt && completionTokens is { } completion)
+            {
+                counters.PromptTokens += prompt;
+                counters.CompletionTokens += completion;
+                counters.Reported++;
+            }
+
+            Prune();
+            Save();
+        }
+    }
+
+    /// <summary>取最近几天（含今天）的合计，按服务商分组。</summary>
+    public IReadOnlyDictionary<string, UsageCounters> Since(int days)
+    {
+        var today = DateTimeOffset.Now.Date;
+        var from = today.AddDays(-(days - 1)).ToString("yyyy-MM-dd");
+
+        var total = new Dictionary<string, UsageCounters>(StringComparer.Ordinal);
+
+        lock (_gate)
+        {
+            foreach (var (day, providers) in _days)
+            {
+                if (string.CompareOrdinal(day, from) < 0)
+                    continue;
+
+                foreach (var (id, counters) in providers)
+                {
+                    if (!total.TryGetValue(id, out var sum))
+                    {
+                        sum = new UsageCounters();
+                        total[id] = sum;
+                    }
+
+                    sum.Requests += counters.Requests;
+                    sum.Failures += counters.Failures;
+                    sum.PromptTokens += counters.PromptTokens;
+                    sum.CompletionTokens += counters.CompletionTokens;
+                    sum.Reported += counters.Reported;
+                }
+            }
+        }
+
+        return total;
+    }
+
+    private void Prune()
+    {
+        var oldest = DateTimeOffset.Now.Date.AddDays(-KeepDays).ToString("yyyy-MM-dd");
+
+        foreach (var day in _days.Keys.Where(d => string.CompareOrdinal(d, oldest) < 0).ToList())
+            _days.Remove(day);
+    }
+
+    private static Dictionary<string, Dictionary<string, UsageCounters>> Load(string path)
+    {
+        try
+        {
+            if (!File.Exists(path))
+                return new Dictionary<string, Dictionary<string, UsageCounters>>(StringComparer.Ordinal);
+
+            return JsonSerializer.Deserialize<Dictionary<string, Dictionary<string, UsageCounters>>>(File.ReadAllText(path), Options)
+                   ?? new Dictionary<string, Dictionary<string, UsageCounters>>(StringComparer.Ordinal);
+        }
+        catch
+        {
+            // 读坏了就当没有 —— 这只是统计，不该影响监控。
+            return new Dictionary<string, Dictionary<string, UsageCounters>>(StringComparer.Ordinal);
+        }
+    }
+
+    private void Save()
+    {
+        try
+        {
+            var directory = Path.GetDirectoryName(_path);
+
+            if (!string.IsNullOrEmpty(directory))
+                Directory.CreateDirectory(directory);
+
+            File.WriteAllText(_path, JsonSerializer.Serialize(_days, Options));
+        }
+        catch
+        {
+            // 写不进去就少一次记录，不影响判定。
+        }
+    }
+}

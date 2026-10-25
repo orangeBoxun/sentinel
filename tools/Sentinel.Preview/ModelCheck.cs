@@ -216,6 +216,15 @@ internal static class ModelCheck
         Console.WriteLine($"调换顺序   : {string.Join(" → ", beforeOrder)}  ⇒  {string.Join(" → ", afterOrder)}");
         ok &= afterOrder.Count == 2 && afterOrder[0] == beforeOrder[1] && afterOrder[1] == beforeOrder[0];
 
+        // 「用量」页也要能画出来
+        ((RadioButton)window.FindName("ModelTabUsage")!).IsChecked = true;
+        Pump();
+
+        var usageStatus = ((TextBlock)window.FindName("ModelUsageStatus")!).Text;
+        Console.WriteLine($"用量页     : {usageStatus}");
+
+        ok &= usageStatus.Length > 0;
+
         // 切回「所有供应商」，确认来回切不炸
         ((RadioButton)window.FindName("ModelTabProviders")!).IsChecked = true;
         Pump();

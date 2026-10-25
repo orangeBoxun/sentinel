@@ -131,3 +131,23 @@ public sealed class ChainRow : System.ComponentModel.INotifyPropertyChanged
             : first.ToString();
     }
 }
+
+/// <summary>「用量」页里的一行。只是显示用的快照，每次刷新重建。</summary>
+public sealed class UsageRow
+{
+    public UsageRow(string name, string today, string week, string month)
+    {
+        Name = name;
+        Today = today;
+        Week = week;
+        Month = month;
+    }
+
+    public string Name { get; }
+
+    public string Today { get; }
+
+    public string Week { get; }
+
+    public string Month { get; }
+}

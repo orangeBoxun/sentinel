@@ -44,7 +44,17 @@ public sealed class MonitorHost : IDisposable
     /// </summary>
     private static readonly TimeSpan StallAfter = TimeSpan.FromMinutes(3);
 
-    public MonitorHost(AgentState state) => _state = state;
+    public MonitorHost(AgentState state)
+    {
+        _state = state;
+
+        // 用量统计活在日志目录里（用户可写），整个进程共用一份。
+        Usage = new Sentinel.Core.Model.UsageStore(
+            System.IO.Path.Combine(state.LogDirectory, Sentinel.Core.Model.UsageStore.FileName));
+    }
+
+    /// <summary>用量统计：请求数、失败数、token。界面拿它画「用量」页。</summary>
+    public Sentinel.Core.Model.UsageStore Usage { get; }
 
     /// <summary>最近一轮走完的时刻。</summary>
     public DateTimeOffset LastTickAt { get; private set; }
@@ -197,7 +207,8 @@ public sealed class MonitorHost : IDisposable
 
             // 模型判定的调度。界面按它的 BlockingIssue 决定要不要弹那条每 5 分钟一次的提醒,
             // 所以要留一个引用。
-            ModelSupervisor = new Sentinel.Core.Model.ModelSupervisor(() => _state.Config);
+            ModelSupervisor = new Sentinel.Core.Model.ModelSupervisor(
+                () => _state.Config, usage: Usage);
 
             MonitorLoop? loop = null;
             loop = new MonitorLoop(enumerator, reader, controller, actions, audit, _state.Config, _state.ConfigPath, ModelSupervisor);
