@@ -2194,9 +2194,10 @@ public partial class MainWindow : Window
         var totalTokens = rangeTotals.Values.Sum(c => c.PromptTokens + c.CompletionTokens);
         var totalReported = rangeTotals.Values.Sum(c => c.Reported);
 
-        UsageRequestsText.Text = totalRequests > 0 ? totalRequests.ToString("N0") : "—";
-        UsageFailuresText.Text = totalRequests > 0 ? totalFailures.ToString("N0") : "—";
-        UsageTokensText.Text = totalReported > 0 ? totalTokens.ToString("N0") : "—";
+        // 没有数据就从 0 开始显示，别用"—"糊过去。
+        UsageRequestsText.Text = totalRequests.ToString("N0");
+        UsageFailuresText.Text = totalFailures.ToString("N0");
+        UsageTokensText.Text = totalReported > 0 || totalTokens > 0 ? totalTokens.ToString("N0") : "0";
         UsageRateText.Text = totalRequests > 0
             ? $"{(double)totalFailures / totalRequests:P0}"
             : "—";

@@ -248,8 +248,17 @@ public sealed class UsageStore
             if (!File.Exists(path))
                 return new Dictionary<string, Dictionary<string, UsageCounters>>(StringComparer.Ordinal);
 
-            return JsonSerializer.Deserialize<Dictionary<string, Dictionary<string, UsageCounters>>>(File.ReadAllText(path), Options)
-                   ?? new Dictionary<string, Dictionary<string, UsageCounters>>(StringComparer.Ordinal);
+            var loaded = JsonSerializer.Deserialize<Dictionary<string, Dictionary<string, UsageCounters>>>(File.ReadAllText(path), Options);
+
+            if (loaded is null)
+                return new Dictionary<string, Dictionary<string, UsageCounters>>(StringComparer.Ordinal);
+
+            // 老版本按天存的桶（键只有 10 位）没有时段信息，按小时看时对不上、按天看时又和
+            // 新数据混在一起 —— 干脆不读：统计从装上这版之后重新开始，不猜那几条是几点。
+            foreach (var key in loaded.Keys.Where(k => k.Length <= 10).ToList())
+                loaded.Remove(key);
+
+            return loaded;
         }
         catch
         {
