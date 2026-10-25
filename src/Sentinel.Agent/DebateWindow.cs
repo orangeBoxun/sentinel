@@ -21,7 +21,9 @@ internal sealed class DebateWindow : Window
 {
     private readonly AgentState _state;
     private readonly Target _target;
-    private readonly WindowRef _window;
+
+    private readonly ComboBox _windowPicker = new() { Width = 430 };
+    private readonly Button _refreshWindows = new() { Content = "刷新", Margin = new Thickness(8, 0, 0, 0) };
 
     private readonly ComboBox _first = new() { DisplayMemberPath = "Display", Width = 190 };
     private readonly ComboBox _second = new() { DisplayMemberPath = "Display", Width = 190 };
@@ -48,7 +50,6 @@ internal sealed class DebateWindow : Window
     {
         _state = state;
         _target = target;
-        _window = window;
 
         Title = "模型讨论 —— 找出谁判错了、禁令该怎么改";
         Width = 820;
@@ -58,6 +59,7 @@ internal sealed class DebateWindow : Window
 
         Content = BuildUi();
         FillChoices();
+        RefreshWindowChoices(window.NativeHandle);
     }
 
     private UIElement BuildUi()
@@ -73,6 +75,12 @@ internal sealed class DebateWindow : Window
             TextWrapping = TextWrapping.Wrap,
             Margin = new Thickness(0, 0, 0, 10),
         });
+
+        var rowWindow = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 0, 0, 10) };
+        rowWindow.Children.Add(Label("讨论的窗口"));
+        rowWindow.Children.Add(_windowPicker);
+        rowWindow.Children.Add(_refreshWindows);
+        inputs.Children.Add(rowWindow);
 
         var row1 = new StackPanel { Orientation = Orientation.Horizontal };
         row1.Children.Add(Label("模型 A"));
@@ -90,7 +98,8 @@ internal sealed class DebateWindow : Window
 
         inputs.Children.Add(new TextBlock
         {
-            Text = $"讨论用的页面：「{_window.MainWindowTitle}」（开始时会现读一次内容）。这一项会真的发几次请求，会产生费用。",
+            Text = "开始时会**现读一次**所选窗口的内容（读到什么，日志第一行会写出来）。"
+                   + "这一项会真的发几次请求，会产生费用。",
             TextWrapping = TextWrapping.Wrap,
             Foreground = (System.Windows.Media.Brush)Application.Current.FindResource("TextSecondary"),
             Margin = new Thickness(0, 10, 0, 0),
@@ -127,6 +136,7 @@ internal sealed class DebateWindow : Window
 
         root.Children.Add(box);
 
+        _refreshWindows.Click += (_, _) => RefreshWindowChoices();
         _start.Click += async (_, _) => await RunAsync();
         _copy.Click += (_, _) => Clipboard.SetText(_log.Text);
         _close.Click += (_, _) => Close();
@@ -141,6 +151,34 @@ internal sealed class DebateWindow : Window
         Margin = new Thickness(left, 0, 6, 0),
         Foreground = (System.Windows.Media.Brush)Application.Current.FindResource("TextSecondary"),
     };
+
+    /// <summary>
+    /// 重新枚举这个目标现在的窗口。为什么不沿用打开时的那一个：目标可能开了好几个窗口
+    /// （浏览器尤其如此），而且你很可能在讨论之前又翻了两页 —— 那时窗口句柄可能已经不在了。
+    /// </summary>
+    private void RefreshWindowChoices(long? prefer = null)
+    {
+        var picked = prefer ?? (_windowPicker.SelectedItem as WindowRef)?.NativeHandle;
+
+        using var enumerator = new WindowEnumerator();
+
+        var matches = enumerator.Enumerate()
+            .Where(w => Sentinel.Core.Engine.TargetMatcher.Matches(_target, w))
+            .OrderByDescending(w => w.IsForeground)
+            .ThenByDescending(w => w.IsExposed)
+            .ToList();
+
+        _windowPicker.ItemsSource = matches;
+        _windowPicker.DisplayMemberPath = nameof(WindowRef.MainWindowTitle);
+
+        _windowPicker.SelectedItem =
+            matches.FirstOrDefault(w => w.NativeHandle == picked) ?? matches.FirstOrDefault();
+
+        _start.IsEnabled = matches.Count > 0;
+
+        if (matches.Count == 0)
+            Append(new DebateLine("系统", "这个目标当前没有窗口 —— 先把那个应用打开，再点「刷新」。", IsSystem: true));
+    }
 
     private void FillChoices()
     {
@@ -198,6 +236,12 @@ internal sealed class DebateWindow : Window
             return;
         }
 
+        if (_windowPicker.SelectedItem is not WindowRef window)
+        {
+            Append(new DebateLine("系统", "先选一个窗口（没有的话点「刷新」）。", IsSystem: true));
+            return;
+        }
+
         _log.Clear();
         _start.IsEnabled = false;
         _copy.IsEnabled = false;
@@ -209,13 +253,19 @@ internal sealed class DebateWindow : Window
             ContentSnapshot? snapshot;
 
             using (var reader = new UiaContentReader())
-                snapshot = reader.Read(_window, _target.Reader);
+                snapshot = reader.Read(window, _target.Reader);
 
             if (snapshot is null)
             {
                 Append(new DebateLine("系统", "读不到这个窗口的内容 —— 先确认「自检」里能读到。", IsSystem: true));
                 return;
             }
+
+            // 把**实际读到的**贴出来：讨论错了页面是很容易发生、又很难发现的事。
+            Append(new DebateLine("系统",
+                $"读到：{snapshot.Title ?? "(无标题)"}{Environment.NewLine}" +
+                $"       {snapshot.Url ?? "(没有网址)"}（正文 {snapshot.BodyText?.Length ?? 0} 字）",
+                IsSystem: true));
 
             var opinion = (_opinion.SelectedItem as Choice<string?>)?.Value;
 
