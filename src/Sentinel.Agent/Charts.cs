@@ -559,11 +559,13 @@ internal static class Charts
 }
 
 /// <summary>
-/// 图表上的悬停卡片：**锚在数据元素上**（不是跟着鼠标），换一个元素时淡入 + 轻微上移。
+/// 图表上的悬停卡片：画在**图表自己的画布内部**，不另开窗口。
 ///
 /// <para>
-/// 之前每移动一像素就 SetOffset 一次：Popup 是独立窗口，这样挪会明显抖动，而且看起来
-/// 总离鼠标很远。图表上的提示本来就该贴着数据，不该追着指针跑。
+/// 之前用 Popup（独立 HWND）：它会压在悬停的那一行上，鼠标"离开"元素 → 收起 → 又"进入" →
+/// 再弹出，来回就是疯狂抖动，而且那套偏移看起来总离鼠标很远。
+/// 现在卡片是 Canvas 的一个子元素、<c>IsHitTestVisible = false</c> —— 它盖在图上但不参与命中
+/// 测试，鼠标始终还在原来那个元素上，不会触发离开；位置也就贴着数据走。
 /// </para>
 /// </summary>
 internal sealed class ChartTooltip
@@ -571,10 +573,9 @@ internal sealed class ChartTooltip
     private const double CardWidth = 210;
     private const double CardHeight = 96;
 
-    private readonly Popup _popup;
+    private readonly Canvas _owner;
     private readonly Border _card;
     private readonly StackPanel _rows;
-    private readonly Canvas _owner;
 
     private UIElement? _current;
 
@@ -598,21 +599,16 @@ internal sealed class ChartTooltip
                 ShadowDepth = 2,
                 Opacity = 0.16,
             },
+            IsHitTestVisible = false,
+            Visibility = Visibility.Collapsed,
         };
 
-        _popup = new Popup
-        {
-            Child = _card,
-            PlacementTarget = owner,
-            Placement = PlacementMode.Relative,
-            AllowsTransparency = true,
-            StaysOpen = true,
-            IsHitTestVisible = false,
-        };
+        Panel.SetZIndex(_card, 100);
+        _owner.Children.Add(_card);
     }
 
     /// <summary>现在是不是开着（离线检查用它验一下悬浮窗真的弹出来了）。</summary>
-    public bool IsOpen => _popup.IsOpen;
+    public bool IsOpen => _card.Visibility == Visibility.Visible;
 
     /// <summary><paramref name="anchor"/> 是画布坐标系里"这块数据"的位置。</summary>
     public void Show(UIElement element, Charts.Tip tip, Point anchor)
@@ -646,7 +642,7 @@ internal sealed class ChartTooltip
 
         Place(anchor);
 
-        _popup.IsOpen = true;
+        _card.Visibility = Visibility.Visible;
         AnimateIn();
     }
 
@@ -656,13 +652,13 @@ internal sealed class ChartTooltip
             return;
 
         _current = null;
-        _popup.IsOpen = false;
+        _card.Visibility = Visibility.Collapsed;
     }
 
     public void Close()
     {
         _current = null;
-        _popup.IsOpen = false;
+        _card.Visibility = Visibility.Collapsed;
     }
 
     /// <summary>贴着数据放：默认在锚点右下，靠边时翻到另一侧。</summary>
@@ -677,8 +673,8 @@ internal sealed class ChartTooltip
         if (y + CardHeight > _owner.ActualHeight)
             y = Math.Max(4, anchor.Y - CardHeight - 10);
 
-        _popup.HorizontalOffset = x;
-        _popup.VerticalOffset = y;
+        Canvas.SetLeft(_card, x);
+        Canvas.SetTop(_card, y);
     }
 
     private void AnimateIn()
