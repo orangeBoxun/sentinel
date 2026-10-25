@@ -3,6 +3,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Windows;
 using System.Windows.Input;
+using System.Windows.Documents;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
 using System.Windows.Threading;
@@ -1989,6 +1990,9 @@ public partial class MainWindow : Window
 
     private ObservableCollection<ChainRow> _chainRows = new();
     private ChainRow? _dragging;
+    private FrameworkElement? _draggingContainer;
+    private DragGhostAdorner? _ghost;
+    private System.Windows.Point _grabOffset;
     private bool _chainOrderChanged;
 
     /// <summary>顶部那两个按钮：切换「所有供应商」/「判断链」。</summary>
@@ -2145,6 +2149,100 @@ public partial class MainWindow : Window
         PersistChain(ModelChain().Where(id => id != row.Provider.Id));
     }
 
+    /// <summary>每一行现在在列表里的纵坐标（换位之前拍一张）。</summary>
+    private Dictionary<FrameworkElement, double> CaptureRowPositions()
+    {
+        var positions = new Dictionary<FrameworkElement, double>();
+
+        for (var i = 0; i < _chainRows.Count; i++)
+        {
+            if (ChainList.ItemContainerGenerator.ContainerFromIndex(i) is FrameworkElement container)
+                positions[container] = container.TranslatePoint(new System.Windows.Point(0, 0), ChainList).Y;
+        }
+
+        return positions;
+    }
+
+    /// <summary>换位之后让每一行从原位置滑到新位置（160ms、缓出）。</summary>
+    private void SlideIntoPlace(Dictionary<FrameworkElement, double> before)
+    {
+        ChainList.UpdateLayout();
+
+        foreach (var (container, oldY) in before)
+        {
+            if (!container.IsVisible)
+                continue;
+
+            var newY = container.TranslatePoint(new System.Windows.Point(0, 0), ChainList).Y;
+            var delta = oldY - newY;
+
+            if (Math.Abs(delta) < 0.5)
+                continue;
+
+            var transform = new System.Windows.Media.TranslateTransform(0, delta);
+            container.RenderTransform = transform;
+
+            transform.BeginAnimation(
+                System.Windows.Media.TranslateTransform.YProperty,
+                new System.Windows.Media.Animation.DoubleAnimation(
+                    0, TimeSpan.FromMilliseconds(160))
+                {
+                    EasingFunction = new System.Windows.Media.Animation.CubicEase
+                    {
+                        EasingMode = System.Windows.Media.Animation.EasingMode.EaseOut,
+                    },
+                });
+        }
+    }
+
+    /// <summary>
+    /// 拖动时跟着鼠标走的那一行。用**静态快照**画，不直接用 VisualBrush：
+    /// 原行在拖动时会被调淡，VisualBrush 会把那个半透明一起画进来。
+    /// </summary>
+    private sealed class DragGhostAdorner : Adorner
+    {
+        private readonly System.Windows.Media.ImageBrush _brush;
+        private readonly System.Windows.Size _size;
+        private double _x;
+        private double _y;
+
+        public DragGhostAdorner(UIElement adornedElement, FrameworkElement source)
+            : base(adornedElement)
+        {
+            IsHitTestVisible = false;
+
+            var width = Math.Max(1, (int)Math.Ceiling(source.ActualWidth));
+            var height = Math.Max(1, (int)Math.Ceiling(source.ActualHeight));
+
+            _size = new System.Windows.Size(width, height);
+
+            var bitmap = new System.Windows.Media.Imaging.RenderTargetBitmap(
+                width, height, 96, 96, System.Windows.Media.PixelFormats.Pbgra32);
+            bitmap.Render(source);
+
+            _brush = new System.Windows.Media.ImageBrush(bitmap)
+            {
+                Stretch = System.Windows.Media.Stretch.Fill,
+            };
+        }
+
+        public void MoveTo(double x, double y)
+        {
+            _x = x;
+            _y = y;
+            InvalidateArrange();
+        }
+
+        protected override void OnRender(System.Windows.Media.DrawingContext drawingContext)
+        {
+            drawingContext.PushOpacity(0.92);
+            drawingContext.DrawRectangle(
+                _brush, null,
+                new System.Windows.Rect(_x, _y, _size.Width, _size.Height));
+            drawingContext.Pop();
+        }
+    }
+
     /// <summary>把第 from 行挪到第 to 行并保存。拖拽走的是同一段落盘逻辑。</summary>
     public void ReorderChain(int from, int to)
     {
@@ -2164,11 +2262,43 @@ public partial class MainWindow : Window
         if ((sender as FrameworkElement)?.DataContext is not ChainRow row)
             return;
 
+        var container = FindRowContainer(row);
+
+        if (container is null)
+            return;
+
         _dragging = row;
+        _draggingContainer = container;
+        _grabOffset = e.GetPosition(container);
+
+        // 跟着鼠标走的"影子"：拿这一刻的静态快照，所以下面把原行调淡不会把影子也弄淡。
+        if (AdornerLayer.GetAdornerLayer(ChainList) is { } layer)
+        {
+            _ghost = new DragGhostAdorner(ChainList, container);
+            layer.Add(_ghost);
+            _ghost.MoveTo(e.GetPosition(ChainList).X - _grabOffset.X,
+                          e.GetPosition(ChainList).Y - _grabOffset.Y);
+        }
+
+        container.Opacity = 0.35;
 
         // 捕获在**列表**上，不是手柄上：这样拖出列表边界也能收到移动/松开事件。
         ChainList.CaptureMouse();
         e.Handled = true;
+    }
+
+    private FrameworkElement? FindRowContainer(ChainRow row)
+    {
+        for (var i = 0; i < _chainRows.Count; i++)
+        {
+            if (ChainList.ItemContainerGenerator.ContainerFromIndex(i) is FrameworkElement container
+                && ReferenceEquals(container.DataContext, row))
+            {
+                return container;
+            }
+        }
+
+        return null;
     }
 
     private void ChainDragMove(object sender, MouseEventArgs e)
@@ -2176,9 +2306,13 @@ public partial class MainWindow : Window
         if (_dragging is null || e.LeftButton != MouseButtonState.Pressed)
             return;
 
+        var position = e.GetPosition(ChainList);
+
+        _ghost?.MoveTo(position.X - _grabOffset.X, position.Y - _grabOffset.Y);
+
         // 不能用 IsMouseOver：鼠标被捕获之后，除了捕获者以外都不再报告"悬停"，
         // 于是永远找不到目标行（第一版就是这么拖不动的）。按坐标命中测试才可靠。
-        var hit = ChainList.InputHitTest(e.GetPosition(ChainList)) as DependencyObject;
+        var hit = ChainList.InputHitTest(position) as DependencyObject;
 
         while (hit is not null and not ContentPresenter)
             hit = System.Windows.Media.VisualTreeHelper.GetParent(hit);
@@ -2192,11 +2326,16 @@ public partial class MainWindow : Window
         if (from < 0 || to < 0 || from == to)
             return;
 
+        // 先记下每一行现在在哪儿，挪完之后让它从原位置滑过去 —— 不然是"啪"一下跳过去的。
+        var before = CaptureRowPositions();
+
         _chainRows.Move(from, to);
         _chainOrderChanged = true;
 
         for (var n = 0; n < _chainRows.Count; n++)
             _chainRows[n].SetPosition(n);
+
+        SlideIntoPlace(before);
     }
 
     private void ChainDragEnd(object sender, MouseEventArgs e)
@@ -2205,6 +2344,18 @@ public partial class MainWindow : Window
             return;
 
         _dragging = null;
+
+        if (_ghost is { } ghost)
+        {
+            AdornerLayer.GetAdornerLayer(ChainList)?.Remove(ghost);
+            _ghost = null;
+        }
+
+        if (_draggingContainer is { } container)
+        {
+            container.Opacity = 1;
+            _draggingContainer = null;
+        }
 
         if (ChainList.IsMouseCaptured)
             ChainList.ReleaseMouseCapture();
