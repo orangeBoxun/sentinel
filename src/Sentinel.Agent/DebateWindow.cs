@@ -17,7 +17,7 @@ namespace Sentinel.Agent;
 /// 不然改出来的引言只会对样例有效。
 /// </para>
 /// </summary>
-internal sealed class DebateWindow : Window
+public sealed class DebateWindow : Window
 {
     private readonly AgentState _state;
     private readonly Target _target;
@@ -36,10 +36,21 @@ internal sealed class DebateWindow : Window
         AcceptsReturn = true,
         TextWrapping = TextWrapping.Wrap,
         VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
-        FontFamily = new System.Windows.Media.FontFamily("Consolas, Microsoft YaHei UI"),
-        FontSize = 12.5,
-        Margin = new Thickness(0, 14, 0, 0),
-        Padding = new Thickness(10),
+
+        // 撑满外层那个 Border。**必须显式覆盖主题里那条**：主题把 TextBox 当成"单行输入框"，
+        // Height 写死了（表单里好看），而日志这块要占满整片区域 —— 不覆盖就是一条被居中的细带，
+        // 文字还被裁掉一半。
+        Height = double.NaN,
+        MinHeight = 0,
+        VerticalAlignment = VerticalAlignment.Stretch,
+        HorizontalAlignment = HorizontalAlignment.Stretch,
+        VerticalContentAlignment = VerticalAlignment.Top,
+        HorizontalContentAlignment = HorizontalAlignment.Left,
+        BorderThickness = new Thickness(0),
+        Background = System.Windows.Media.Brushes.Transparent,
+        FontFamily = new System.Windows.Media.FontFamily("Microsoft YaHei UI, Consolas"),
+        FontSize = 13,
+        Padding = new Thickness(12),
     };
 
     private readonly Button _start = new() { Content = "开始讨论", Padding = new Thickness(18, 6, 18, 6) };
@@ -98,7 +109,7 @@ internal sealed class DebateWindow : Window
 
         inputs.Children.Add(new TextBlock
         {
-            Text = "开始时会**现读一次**所选窗口的内容（读到什么，日志第一行会写出来）。"
+            Text = "开始时会现读一次所选窗口的内容（读到什么，日志第一行会写出来）。"
                    + "这一项会真的发几次请求，会产生费用。",
             TextWrapping = TextWrapping.Wrap,
             Foreground = (System.Windows.Media.Brush)Application.Current.FindResource("TextSecondary"),
@@ -120,14 +131,11 @@ internal sealed class DebateWindow : Window
         buttons.Children.Add(_close);
         root.Children.Add(buttons);
 
-        _reason.MinWidth = 240;
-
-        var scroll = new ScrollViewer { VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
-        scroll.Content = _log;
+        _reason.Width = 320;
 
         var box = new Border
         {
-            Child = scroll,
+            Child = _log,
             BorderThickness = new Thickness(1),
             CornerRadius = new CornerRadius(8),
             Background = System.Windows.Media.Brushes.White,

@@ -179,6 +179,12 @@ public partial class App : Application
         }
 
         // 「大语言模型」这一页整条路：添加 → 填 → 取列表 → 保存 → 回到列表。
+        if (e.Args.Length >= 2 && e.Args[0] == "--debate-check")
+        {
+            Shutdown(DebateCheck.Run(e.Args[1]));
+            return;
+        }
+
         if (e.Args.Length >= 2 && e.Args[0] == "--models-check")
         {
             Shutdown(ModelCheck.Run(e.Args[1]));
