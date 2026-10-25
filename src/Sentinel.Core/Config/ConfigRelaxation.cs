@@ -86,6 +86,16 @@ public static class ConfigRelaxation
         var before = SupervisingModels(previous);
         var after = SupervisingModels(current);
 
+        // 取消"稳定提供服务" = 放弃"每页必判"的保证 = 放宽；勾上 = 收紧。
+        var beforeStable = StableCount(previous, before);
+        var afterStable = StableCount(current, after);
+
+        if (afterStable < beforeStable)
+            return ChangeDirection.Relaxing;
+
+        if (afterStable > beforeStable)
+            return ChangeDirection.Tightening;
+
         // 一样多、而且换的是谁都不算：换服务商只是"用哪条管道"。
         if (before.SetEquals(after))
             return ChangeDirection.Neutral;
@@ -101,6 +111,12 @@ public static class ConfigRelaxation
         // 数量没变、换的是人选：和"换服务商不算"同一个道理。
         return ChangeDirection.Neutral;
     }
+
+    /// <summary>
+    /// 链上标了"稳定提供服务"的个数。取消勾选 = 放弃"每页必判"的保证 = 放宽。
+    /// </summary>
+    private static int StableCount(AppConfig config, HashSet<string> chain) =>
+        config.Models.Count(m => m.Stable && chain.Contains(m.Id));
 
     /// <summary>
     /// 现在到底有几个模型在参与判断：有链就看链，没链就看单个 ActiveModelId（老配置）。

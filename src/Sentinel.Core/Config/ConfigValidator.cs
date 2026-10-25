@@ -139,15 +139,22 @@ public static class ConfigValidator
 
         // 不是错误：先写规则、再配服务商，这个顺序很自然。但不提醒的话，那条规则会
         // **什么都不做**，而界面上看不出任何区别 —— 和"配好了但没命中"长得一模一样。
-        var supervising = config.ModelChain.Any(id => !string.IsNullOrWhiteSpace(id))
-                          || !string.IsNullOrWhiteSpace(config.ActiveModelId);
+        // 空链 = 还没配（或被人清空了），这时**不弹全屏**，只在界面上说清楚。
+        var chain = config.ModelChain
+            .Where(id => !string.IsNullOrWhiteSpace(id) && modelIds.Contains(id))
+            .ToList();
 
-        if (!supervising
+        if (chain.Count == 0
             && config.Targets.Any(t => t.Rules.Any(r => r.Match.Type == MatchKind.Model)))
         {
             issues.Add(Warning("Models",
-                "有「模型监督」的规则，但没有启用任何模型服务商 —— 这些规则现在不会生效"));
+                "有「模型监督」的规则，但判断链是空的 —— 这些规则现在不会生效"));
         }
+
+        // 链里一个"稳定提供服务"的都没有：等于"它挂了也没人告诉你"，那条保证就没有了。
+        if (chain.Count > 0 && !config.Models.Any(m => m.Stable && chain.Contains(m.Id)))
+            issues.Add(Error("ModelChain",
+                "判断链里至少要有一个标了「能够稳定提供服务」的供应商 —— 否则它们连不上时不会提醒"));
 
         var targetIds = new HashSet<string>(StringComparer.Ordinal);
 

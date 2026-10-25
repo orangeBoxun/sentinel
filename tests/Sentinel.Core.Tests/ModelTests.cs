@@ -682,7 +682,7 @@ public class ModelTests
         return config;
     }
 
-    private static ModelSupervisor ChainSupervisor(AppConfig config, PerModelHandler handler) =>
+    private static ModelSupervisor ChainSupervisor(AppConfig config, HttpMessageHandler handler) =>
         new(() => config,
             new ModelClient(new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(10) }),
             // 公网那几趟探测别真发出去：测试里假定"网是通的"。
@@ -759,6 +759,104 @@ public class ModelTests
         await WaitUntil(() => supervisor.Lookup("r", Snapshot()).Kind == ModelVerdictKind.Blocked);
 
         Assert.Equal("strict", handler.Asked[^1]);
+    }
+
+    /// <summary>某个模型名字一律连不上，其余照常回答 —— 用来模拟"链上有一个供应商挂了"。</summary>
+    private sealed class BrokenForHandler : HttpMessageHandler
+    {
+        private readonly HashSet<string> _broken;
+        private readonly Dictionary<string, bool> _violates;
+
+        public BrokenForHandler(HashSet<string> broken, Dictionary<string, bool> violates)
+        {
+            _broken = broken;
+            _violates = violates;
+        }
+
+        public List<string> Asked { get; } = new();
+
+        protected override async Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            var body = request.Content is null ? "" : await request.Content.ReadAsStringAsync(cancellationToken);
+
+            var model = "";
+            try
+            {
+                model = System.Text.Json.JsonDocument.Parse(body).RootElement.GetProperty("model").GetString() ?? "";
+            }
+            catch
+            {
+            }
+
+            Asked.Add(model);
+
+            if (_broken.Contains(model))
+                throw new HttpRequestException("目标计算机积极拒绝，无法连接。");
+
+            var violates = _violates.TryGetValue(model, out var flag) && flag;
+            var answer = violates ? "[true, \"违规\"]" : "[false, \"\"]";
+            var json = "{\"choices\":[{\"message\":{\"content\":"
+                       + System.Text.Json.JsonSerializer.Serialize(answer) + "}}]}";
+
+            return new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(json) };
+        }
+    }
+
+    private static AppConfig StableChainConfig(params (string Id, bool Stable)[] models)
+    {
+        var config = new AppConfig();
+
+        foreach (var (id, stable) in models)
+        {
+            config.Models.Add(new ModelProvider
+            {
+                Id = id,
+                Name = id,
+                Format = ApiFormat.OpenAi,
+                Endpoint = "https://relay.invalid/v1/chat/completions",
+                Model = id,
+                ApiKey = "k",
+                Stable = stable,
+            });
+        }
+
+        config.ModelChain = models.Select(m => m.Id).ToList();
+        return config;
+    }
+
+    [Fact]
+    public async Task 稳定的那个挂了_照样用链上其他模型判_同时报出链条坏了()
+    {
+        // 用户的要求：标了"稳定提供服务"的挂了 → 反复全屏提醒，**并且继续判定**。
+        var config = StableChainConfig(("stable", true), ("other", false));
+        var handler = new BrokenForHandler(new() { "stable" }, new() { ["other"] = true });
+        var supervisor = ChainSupervisor(config, handler);
+
+        supervisor.Request("r", "禁令", Snapshot());
+        await WaitUntil(() => supervisor.Lookup("r", Snapshot()).Kind == ModelVerdictKind.Blocked);
+
+        // 另一个模型判出来了，所以判定照常生效
+        Assert.Equal(ModelVerdictKind.Blocked, supervisor.Lookup("r", Snapshot()).Kind);
+
+        // 同时，稳定的那个连不上 → 进入提醒状态
+        await WaitUntil(() => supervisor.BlockingIssue is not null);
+        Assert.Equal(ModelTroubleKind.NeedsAttention, supervisor.BlockingKind);
+        Assert.Contains("stable", supervisor.BlockingIssue);
+    }
+
+    [Fact]
+    public async Task 没标稳定的挂了_只是跳过_不提醒()
+    {
+        var config = StableChainConfig(("stable", true), ("optional", false));
+        var handler = new BrokenForHandler(new() { "optional" }, new() { ["stable"] = false });
+        var supervisor = ChainSupervisor(config, handler);
+
+        supervisor.Request("r", "禁令", Snapshot());
+        await WaitUntil(() => supervisor.Lookup("r", Snapshot()).Kind == ModelVerdictKind.Allowed);
+
+        Assert.Null(supervisor.BlockingIssue);
+        Assert.Equal(ModelTroubleKind.None, supervisor.BlockingKind);
     }
 
     private static async Task WaitUntil(Func<bool> condition)

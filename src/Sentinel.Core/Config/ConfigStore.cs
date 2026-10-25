@@ -27,6 +27,32 @@ public static class ConfigStore
     /// Strict load: reports why it failed instead of silently substituting a default. Import and
     /// validation use this — degrading to an empty config there would quietly discard the user's file.
     /// </summary>
+    /// <summary>
+    /// 老配置升级：以前只有一个 <see cref="AppConfig.ActiveModelId"/>，现在判断链才是权威。
+    ///
+    /// <para>
+    /// 把它搬进链里、并标成"稳定提供服务" —— 那正是它升级前的事实：那一个连不上时，原来的
+    /// 行为就是反复提醒。不搬的话，升级会**悄悄**停掉模型监督（链变空了），而界面上看不出区别。
+    /// </para>
+    /// <para>
+    /// 只搬一次：之后链空 = 用户自己清空的（那件事要令牌，而且会把 ActiveModelId 一起清掉），
+    /// 不会再把旧值扶回来。
+    /// </para>
+    /// </summary>
+    private static void Migrate(AppConfig config)
+    {
+        if (config.ModelChain is { Count: > 0 } || string.IsNullOrWhiteSpace(config.ActiveModelId))
+            return;
+
+        var provider = config.Models.FirstOrDefault(m => m.Id == config.ActiveModelId);
+
+        if (provider is null)
+            return;
+
+        config.ModelChain = new List<string> { provider.Id };
+        provider.Stable = true;
+    }
+
     public static bool TryLoad(string path, out AppConfig config, out string? error)
     {
         config = new AppConfig();
@@ -48,6 +74,7 @@ public static class ConfigStore
             }
 
             config = parsed;
+            Migrate(config);
             return true;
         }
         catch (JsonException ex)

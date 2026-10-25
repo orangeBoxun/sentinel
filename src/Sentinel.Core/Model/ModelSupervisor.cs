@@ -147,6 +147,9 @@ public sealed class ModelSupervisor : IModelSupervisor
 
     private int _version;
 
+    /// <summary>链上还有没有能给出判定的模型。没有 = 停发新请求，等探测问活。</summary>
+    private volatile bool _usable = true;
+
     public ModelVerdict Lookup(string ruleId, ContentSnapshot snapshot)
     {
         var now = DateTimeOffset.Now;
@@ -254,28 +257,62 @@ public sealed class ModelSupervisor : IModelSupervisor
 
         try
         {
-            // 探的是**整条链**：只要链上有一个模型答得上来，监督就是活的。
-            var run = await RunChainAsync(ProbeInstruction(), ProbeSnapshot()).ConfigureAwait(false);
+            // 探的是**那些标了"稳定"的**：它们是"每页必判"的保证，只要有一个还答不上来，
+            // 提醒就不该停。没标"稳定"的不探 —— 它们本来就只是尽力而为，且探一次就是真花钱。
+            var chain = Chain();
+            var stable = chain.Where(p => p.Stable).ToList();
+            var toProbe = stable.Count > 0 ? stable : chain;
+
+            ModelProvider? failedAt = null;
+            ModelCallResult? failure = null;
+
+            foreach (var provider in toProbe)
+            {
+                if (string.IsNullOrWhiteSpace(provider.Endpoint) || string.IsNullOrWhiteSpace(provider.Model))
+                {
+                    failedAt ??= provider;
+                    failure ??= new ModelCallResult(ModelCallOutcome.NeedsAttention,
+                        Message: "这个服务商还没填地址和模型。");
+                    continue;
+                }
+
+                try
+                {
+                    var result = await _client
+                        .JudgeAsync(provider, ProbeInstruction(), ProbeSnapshot(), CancellationToken.None)
+                        .ConfigureAwait(false);
+
+                    if (result.Outcome == ModelCallOutcome.Answered)
+                        continue;
+
+                    failedAt ??= provider;
+                    failure ??= result;
+                }
+                catch
+                {
+                    // 抛异常 = 这次没问到，按"还不通"算。
+                    failedAt ??= provider;
+                }
+            }
 
             // 没拿到判定：不能算好了。**只有真拿到判定才算好了** —— 服务端 5xx、回来的东西
             // 看不懂、连不上，都只说明"这次没学到东西"，把它们读成"通了"就等于提醒因为一次
             // 没有信息的探测停了，而真实判定照样在失败。
-            if (run.Answer is not { Outcome: ModelCallOutcome.Answered })
+            if (failure is not null)
             {
-                if (run.Failure is { } failure)
+                var online = await OnlineIfItMattersAsync(failure.Outcome, failedAt?.Endpoint)
+                    .ConfigureAwait(false);
+
+                var trouble = ModelTrouble.Classify(failure.Outcome, failedAt?.Endpoint, online);
+
+                lock (_gate)
                 {
-                    var online = await OnlineIfItMattersAsync(failure.Outcome, run.FailedAt?.Endpoint)
-                        .ConfigureAwait(false);
-
-                    var trouble = ModelTrouble.Classify(failure.Outcome, run.FailedAt?.Endpoint, online);
-
-                    lock (_gate)
-                    {
-                        BlockingKind = trouble;
-                        BlockingIssue = trouble == ModelTroubleKind.Offline
-                            ? OfflineIssue
-                            : failure.Message ?? "模型监督现在拿不到判定。";
-                    }
+                    BlockingKind = trouble;
+                    BlockingIssue = trouble == ModelTroubleKind.Offline
+                        ? OfflineIssue
+                        : failedAt is null
+                            ? failure.Message ?? "模型监督现在拿不到判定。"
+                            : $"「{failedAt.Name}」{failure.Message}";
                 }
 
                 return false;   // 接着（该吵的时候）提醒
@@ -288,6 +325,7 @@ public sealed class ModelSupervisor : IModelSupervisor
                 LastAnswered = DateTimeOffset.Now;
             }
 
+            _usable = true;
             return true;
         }
         catch
@@ -372,7 +410,9 @@ public sealed class ModelSupervisor : IModelSupervisor
         // 回来也早没用了。对着一个限流的服务商，每页都发一次只会让限流更久。
         // 这时候该做的是反复提醒人去换模型，不是接着烧机器。
         // 恢复靠探测（见 ProbeAsync）：它每 30 秒到 2 分钟真问一次"现在通不通、够不够快"。
-        if (BlockingKind != ModelTroubleKind.None)
+        // 一个都判不了才停发（别再烧机器）；只要链上还有一个能答，就接着判 ——
+        // 某个稳定供应商挂了会另行走提醒，不该让整个监督一起停摆。
+        if (!_usable)
             return;
 
         var fingerprint = ContentFingerprint.Of(snapshot);
@@ -434,35 +474,50 @@ public sealed class ModelSupervisor : IModelSupervisor
 
             if (run.Answer is { Outcome: ModelCallOutcome.Answered } answer)
             {
-                BlockingIssue = null;
-                BlockingKind = ModelTroubleKind.None;
+                // 有人判出来了：判定照存，请求也接着发（链上还有活的模型）。
+                _usable = true;
                 LastAnswered = DateTimeOffset.Now;
                 Store(signature, key, ruleId, snapshot.Url, answer.Violates
                     ? new ModelVerdict(ModelVerdictKind.Blocked, answer.Reason)
                     : ModelVerdict.Allowed);
+            }
+            else
+            {
+                // 整条链都没给出判定：停发新请求（别再烧机器），等探测把它们问活。
+                _usable = false;
+            }
+
+            // **告警只认"稳定"的那几个**：没标的挂了就跳过（免费额度被抢光是常事，
+            // 为它一直弹全屏只会把人吵到关掉提醒）；**整条链都没答上来**也算停摆。
+            var (failedAt, failure) = run.StableFailure is not null
+                ? (run.StableFailedAt, run.StableFailure)
+                : run.Answer is null
+                    ? (run.FailedAt, run.Failure)
+                    : (null, null);
+
+            if (failure is null)
+            {
+                if (run.Answer is not null)
+                {
+                    BlockingIssue = null;
+                    BlockingKind = ModelTroubleKind.None;
+                }
+
                 return;
             }
 
-            if (run.Failure is not { } failure)
-                return;
-
-            // **拿不到判定，就是"没人判了"** —— 限流、欠费、5xx、公网连不上、太慢、
-            // 本地没起来，全都是同一件事。分类只决定提醒里那句话怎么说（见 ModelTrouble），
-            // 节奏是同一个（见 ModelAlertPacing）。
-            //
-            // 原来只吵"本地没起来"和"太慢"两类，另外几类一个不吵、一个五分钟才吵一次 ——
-            // 而用户真正会碰到的是免费在线模型被限流：网好好的、网站打得开、照样能刷，
-            // 只是没人判了。那种情况下五分钟一次的提醒起不到任何作用。
-            //
-            // 反过来的那一头也要区分：**整台机器没网**的时候不该吵（网站自己也打不开），
+            // 分类只决定提醒里那句话怎么说（见 ModelTrouble），节奏是同一个
+            // （见 ModelAlertPacing）。**整台机器没网**的时候不该吵（网站自己也打不开），
             // 所以要先问一句"现在有网吗"（见 Connectivity）。
-            var online = await OnlineIfItMattersAsync(failure.Outcome, run.FailedAt?.Endpoint)
+            var online = await OnlineIfItMattersAsync(failure.Outcome, failedAt?.Endpoint)
                 .ConfigureAwait(false);
 
-            BlockingKind = ModelTrouble.Classify(failure.Outcome, run.FailedAt?.Endpoint, online);
+            BlockingKind = ModelTrouble.Classify(failure.Outcome, failedAt?.Endpoint, online);
             BlockingIssue = BlockingKind == ModelTroubleKind.Offline
                 ? OfflineIssue
-                : failure.Message ?? "模型监督现在拿不到判定。";
+                : failedAt is null
+                    ? failure.Message ?? "模型监督现在拿不到判定。"
+                    : $"「{failedAt.Name}」{failure.Message}";
         }
         catch
         {
@@ -547,9 +602,16 @@ public sealed class ModelSupervisor : IModelSupervisor
     private string ChainSignature() =>
         string.Join(">", Chain().Select(p => $"{p.Id}:{p.Model}:{p.Endpoint}"));
 
-    /// <summary>跑一遍链的结果：拿到了哪个回答，或者卡在哪儿了。</summary>
+    /// <summary>
+    /// 跑一遍链的结果。失败分两种：**稳定供应商**失败（要吵）和其他失败（跳过就好）。
+    /// </summary>
     private sealed record ChainRun(
-        ModelCallResult? Answer, ModelProvider? AnsweredBy, ModelProvider? FailedAt, ModelCallResult? Failure);
+        ModelCallResult? Answer,
+        ModelProvider? AnsweredBy,
+        ModelProvider? FailedAt,
+        ModelCallResult? Failure,
+        ModelProvider? StableFailedAt,
+        ModelCallResult? StableFailure);
 
     /// <summary>
     /// 按链一路问下去，**任一模型说违规就停在那里**；说不违规就交给下一个；
@@ -562,6 +624,8 @@ public sealed class ModelSupervisor : IModelSupervisor
         ModelProvider? answeredBy = null;
         ModelProvider? failedAt = null;
         ModelCallResult? failure = null;
+        ModelProvider? stableFailedAt = null;
+        ModelCallResult? stableFailure = null;
 
         foreach (var provider in Chain())
         {
@@ -600,12 +664,18 @@ public sealed class ModelSupervisor : IModelSupervisor
                 // 失败只算"它没意见"，继续问下一个：链上有别的模型能判，监督就还活着。
                 failedAt ??= provider;
                 failure ??= result;
+
+                // 但标了"稳定提供服务"的那个不一样 —— 它挂了就是"每页必判"的保证破了，
+                // 要反复提醒（哪怕这条链上还有别人在判）。
+                if (provider.Stable)
+                {
+                    stableFailedAt ??= provider;
+                    stableFailure ??= result;
+                }
             }
         }
 
-        return answered > 0
-            ? new ChainRun(answer, answeredBy, null, null)
-            : new ChainRun(null, null, failedAt, failure);
+        return new ChainRun(answer, answeredBy, failedAt, failure, stableFailedAt, stableFailure);
     }
 
     private void Store(string signature, string key, string ruleId, string? url, ModelVerdict verdict)

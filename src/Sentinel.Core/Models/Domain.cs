@@ -235,6 +235,26 @@ public sealed class ModelProvider
     public string Website { get; set; } = "";
 
     /// <summary>
+    /// 这个服务商<b>保证能提供判断</b>。判断链上至少要有一个。
+    ///
+    /// <para>
+    /// 它决定两件事，而且只决定这两件事：
+    /// </para>
+    /// <list type="bullet">
+    /// <item><description>
+    /// <b>连不上时要反复全屏提醒。</b>没标它的供应商连不上只是跳过（免费额度被抢光是常事，
+    /// 为它一直弹全屏只会把人吵到关掉提醒）。标了它就连不上 = 你承诺的"每页必判"破了，
+    /// 那必须让人知道。
+    /// </description></item>
+    /// <item><description>
+    /// <b>没解锁就取消不掉。</b>取消它等于放弃那条保证，是放宽 —— 和"从链里删掉一个供应商"
+    /// 同一类。
+    /// </description></item>
+    /// </list>
+    /// </summary>
+    public bool Stable { get; set; }
+
+    /// <summary>
     /// 取模型列表用哪个地址。留空就按请求地址推一个（域名 + <c>/v1/models</c>）。
     ///
     /// <para>
