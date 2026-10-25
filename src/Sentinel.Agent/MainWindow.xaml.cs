@@ -2149,52 +2149,6 @@ public partial class MainWindow : Window
         PersistChain(ModelChain().Where(id => id != row.Provider.Id));
     }
 
-    /// <summary>每一行现在在列表里的纵坐标（换位之前拍一张）。</summary>
-    private Dictionary<FrameworkElement, double> CaptureRowPositions()
-    {
-        var positions = new Dictionary<FrameworkElement, double>();
-
-        for (var i = 0; i < _chainRows.Count; i++)
-        {
-            if (ChainList.ItemContainerGenerator.ContainerFromIndex(i) is FrameworkElement container)
-                positions[container] = container.TranslatePoint(new System.Windows.Point(0, 0), ChainList).Y;
-        }
-
-        return positions;
-    }
-
-    /// <summary>换位之后让每一行从原位置滑到新位置（160ms、缓出）。</summary>
-    private void SlideIntoPlace(Dictionary<FrameworkElement, double> before)
-    {
-        ChainList.UpdateLayout();
-
-        foreach (var (container, oldY) in before)
-        {
-            if (!container.IsVisible)
-                continue;
-
-            var newY = container.TranslatePoint(new System.Windows.Point(0, 0), ChainList).Y;
-            var delta = oldY - newY;
-
-            if (Math.Abs(delta) < 0.5)
-                continue;
-
-            var transform = new System.Windows.Media.TranslateTransform(0, delta);
-            container.RenderTransform = transform;
-
-            transform.BeginAnimation(
-                System.Windows.Media.TranslateTransform.YProperty,
-                new System.Windows.Media.Animation.DoubleAnimation(
-                    0, TimeSpan.FromMilliseconds(160))
-                {
-                    EasingFunction = new System.Windows.Media.Animation.CubicEase
-                    {
-                        EasingMode = System.Windows.Media.Animation.EasingMode.EaseOut,
-                    },
-                });
-        }
-    }
-
     /// <summary>
     /// 拖动时跟着鼠标走的那一行。用**静态快照**画，不直接用 VisualBrush：
     /// 原行在拖动时会被调淡，VisualBrush 会把那个半透明一起画进来。
@@ -2326,16 +2280,16 @@ public partial class MainWindow : Window
         if (from < 0 || to < 0 || from == to)
             return;
 
-        // 先记下每一行现在在哪儿，挪完之后让它从原位置滑过去 —— 不然是"啪"一下跳过去的。
-        var before = CaptureRowPositions();
-
         _chainRows.Move(from, to);
         _chainOrderChanged = true;
 
         for (var n = 0; n < _chainRows.Count; n++)
             _chainRows[n].SetPosition(n);
 
-        SlideIntoPlace(before);
+        // 这里**不能**加"滑到新位置"的动画：RenderTransform 的位移会参与命中测试，
+        // 动画还在跑的时候鼠标底下已经是另一行了 —— 于是每移动一像素就再换一次，
+        // 两行来回交换，看起来就是鬼畜抖动。拖动时的反馈交给跟着光标的影子，
+        // 松手时影子淡出。
     }
 
     private void ChainDragEnd(object sender, MouseEventArgs e)
@@ -2347,8 +2301,12 @@ public partial class MainWindow : Window
 
         if (_ghost is { } ghost)
         {
-            AdornerLayer.GetAdornerLayer(ChainList)?.Remove(ghost);
             _ghost = null;
+
+            var fade = new System.Windows.Media.Animation.DoubleAnimation(
+                0, TimeSpan.FromMilliseconds(120));
+            fade.Completed += (_, _) => AdornerLayer.GetAdornerLayer(ChainList)?.Remove(ghost);
+            ghost.BeginAnimation(UIElement.OpacityProperty, fade);
         }
 
         if (_draggingContainer is { } container)
