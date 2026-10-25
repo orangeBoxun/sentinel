@@ -147,6 +147,7 @@ public sealed class ModelDebate
         var current = instruction;
         string? failure = null;
         string? lastDiagnosis = null;
+        string? lastExchange = null;
         var rounds = 0;
         var passed = false;
         var stoppedByUser = false;
@@ -164,12 +165,13 @@ public sealed class ModelDebate
                 if (correct is not null && wrong is not null && wrongResult is not null && goal is { } mark)
                 {
                     say(new DebateLine("系统",
-                        $"第 {round} 轮：先让判对的「{correct.Name}」指出「{wrong.Name}」错在哪一步，"
-                        + $"再由「{wrong.Name}」照着写补丁。", IsSystem: true));
+                        $"第 {round} 轮：「{correct.Name}」先说它漏在哪，再让「{wrong.Name}」答辩，"
+                        + "两边把话说完，最后看重新判这一页的结果。", IsSystem: true));
 
                     lastDiagnosis = await AskAsync(
                         correct,
-                        DiagnosisPrompt(correct, correctResult!, wrong, wrongResult, instruction, page, mark, failure, notes),
+                        DiagnosisPrompt(correct, correctResult!, wrong, wrongResult, instruction, page, mark,
+                            failure, notes, lastExchange),
                         token).ConfigureAwait(false);
 
                     say(new DebateLine(correct.Name, lastDiagnosis ?? "(没答上来)"));
@@ -177,10 +179,12 @@ public sealed class ModelDebate
                     var fix = await AskAsync(
                         wrong,
                         FixPrompt(wrong, wrongResult, correct, correctResult!, instruction, page, mark,
-                            lastDiagnosis, failure, notes),
+                            lastDiagnosis, failure, notes, lastExchange),
                         token).ConfigureAwait(false);
 
                     say(new DebateLine(wrong.Name, fix ?? "(没答上来)"));
+
+                    var fixOwner = wrong;
 
                     // 判错的一方要是又绕开不写，就让判对的一方直接给一条 —— 总得有人把话说到点子上。
                     if (ExtractPatch(fix).Count == 0)
@@ -191,13 +195,28 @@ public sealed class ModelDebate
                         fix = await AskAsync(
                             correct,
                             FixPrompt(correct, correctResult!, wrong, wrongResult, instruction, page, mark,
-                                lastDiagnosis, failure, notes),
+                                lastDiagnosis, failure, notes, lastExchange),
                             token).ConfigureAwait(false);
 
                         say(new DebateLine(correct.Name, fix ?? "(没答上来)"));
+
+                        fixOwner = correct;
+                    }
+                    else
+                    {
+                        // 让它把话说完：判对的一方要正面回应自辩，而不是各说各话。
+                        var reply = await AskAsync(
+                            correct,
+                            ReplyPrompt(correct, wrong, lastDiagnosis, fix, notes),
+                            token).ConfigureAwait(false);
+
+                        say(new DebateLine(correct.Name, reply ?? "(没答上来)"));
+
+                        lastExchange = $"上一轮的交锋：\n【{wrong.Name}】{fix}"
+                                       + (reply is null ? "" : $"\n【{correct.Name}】{reply}");
                     }
 
-                    attempts = new List<(ModelProvider, string?)> { (wrong, fix) };
+                    attempts = new List<(ModelProvider, string?)> { (fixOwner, fix) };
                 }
                 else
                 {
@@ -245,7 +264,8 @@ public sealed class ModelDebate
                     var b2 = await JudgeAsync(b, trial, snapshot, token).ConfigureAwait(false);
 
                     say(new DebateLine("系统",
-                        $"  加上去重判：{a.Name} {Short(a2)}；{b.Name} {Short(b2)}", IsSystem: true));
+                        "  用改过的禁令 + 这一页，重新走一次监控的判断（不带讨论里的任何内容）："
+                        + $"{a.Name} {Short(a2)}；{b.Name} {Short(b2)}", IsSystem: true));
 
                     var score = Closeness(a2, b2, goal);
 
@@ -470,10 +490,12 @@ public sealed class ModelDebate
         string page,
         bool goal,
         string? failure,
-        IReadOnlyList<string> notes)
+        IReadOnlyList<string> notes,
+        string? exchange)
     {
         var last = string.IsNullOrWhiteSpace(failure) ? "" : "\n上一轮的验证结果：\n" + failure + "\n";
         var extra = Notes(notes);
+        var history = History(exchange);
 
         return $"""
             禁令（用户写给自己看的）：
@@ -488,6 +510,7 @@ public sealed class ModelDebate
             用户自己认为这页「{Word(goal)}」。目的不是让它完全判对，而是别让这类页面漏过去：
             {wrong.Name} 这次正常和从严一致，等于有把握地定论了 —— 链上没人再兜。
             {last}
+            {history}
             你的任务：指出「{wrong.Name}」为什么连从严那一次也没看出来。只做诊断，不要写改法。
 
             分两行：
@@ -497,6 +520,24 @@ public sealed class ModelDebate
             最多 3 行，说具体的，不要客套，不要复述禁令。
             """;
     }
+
+    /// <summary>判对的一方正面回应自辩 —— 让它把话说完，而不是各说各话。</summary>
+    private static string ReplyPrompt(
+        ModelProvider correct,
+        ModelProvider wrong,
+        string? diagnosis,
+        string? fix,
+        IReadOnlyList<string> notes) =>
+        $"""
+         「{wrong.Name}」听了你的诊断之后这样说（后面是它给的补丁）：
+         {fix ?? "(没答上来)"}
+
+         你刚才的诊断：
+         {diagnosis ?? "(没答)"}
+         {Notes(notes)}
+         请逐条回应它的自辩，最多 3 行：哪些理由站不住、为什么；如果它说的对，就直接承认。
+         不要写新补丁，不要复述禁令。
+         """;
 
     /// <summary>让判错的一方（或判对的一方替它）写补丁：一条能直接加进禁令的通用规则。</summary>
     private static string FixPrompt(
@@ -509,11 +550,13 @@ public sealed class ModelDebate
         bool goal,
         string? diagnosis,
         string? failure,
-        IReadOnlyList<string> notes)
+        IReadOnlyList<string> notes,
+        string? exchange)
     {
         var last = string.IsNullOrWhiteSpace(failure) ? "" : "\n上一轮的验证结果：\n" + failure + "\n";
         var cross = string.IsNullOrWhiteSpace(diagnosis) ? "" : "\n另一个模型指出的问题：\n" + diagnosis + "\n";
         var extra = Notes(notes);
+        var history = History(exchange);
 
         // 正常情况下是漏掉的那家自己写；它绕开不写时，会让兜住的那家替它写。
         var selfIsWrong = !Catches(own, goal);
@@ -536,8 +579,10 @@ public sealed class ModelDebate
             另一个模型（{other.Name}）的判断：{Short(otherResult)}
             {blame}
             {cross}{last}
-            第一段（一句话）：{first}。
-            不用认错，但必须说清是哪一步 —— 是没看搜索词，还是把搜索页一律当中间页放过了。
+            {history}
+            第一段（最多 3 行）：{first}。
+            要是你不认同那个诊断，就把它站不住的地方说清楚（这是在讨论，不是认错比赛）；
+            说清了也仍然要给下面那条补丁 —— 用户的标准摆在那儿，这类页面不能漏。
 
             第二段：以「补丁：」开头，后面最多 3 行，每行一句能直接加进禁令的规则。
 
@@ -592,6 +637,10 @@ public sealed class ModelDebate
             - 不评价对方、不评价禁令是否自相矛盾、不复述禁令原文。
             """;
     }
+
+    /// <summary>上一轮双方说过的话 —— 新一轮要接着讲，不能从头再来。</summary>
+    private static string History(string? exchange) =>
+        string.IsNullOrWhiteSpace(exchange) ? "" : "\n" + exchange + "\n";
 
     /// <summary>用户在半路补充的信息 —— 原样交给两个模型，它们得按这个理解这一页。</summary>
     private static string Notes(IReadOnlyList<string> notes) =>

@@ -1,3 +1,4 @@
+using System.Text;
 using System.Windows;
 using System.Windows.Controls;
 using Sentinel.Core.Abstractions;
@@ -30,28 +31,23 @@ public sealed class DebateWindow : Window
     private readonly ComboBox _opinion = new() { Width = 110 };
     private readonly TextBox _reason = new() { MinWidth = 220 };
 
-    private readonly TextBox _log = new()
-    {
-        IsReadOnly = true,
-        AcceptsReturn = true,
-        TextWrapping = TextWrapping.Wrap,
-        VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+    // 讨论过程按群聊来显示：模型带头像和气泡（左右分开），进度/提示居中成灰字。
+    // 纯文本读不出"谁在回谁"这个结构，而讨论的价值就在这个结构里。
+    private readonly StackPanel _messages = new() { Margin = new Thickness(8) };
 
-        // 撑满外层那个 Border。**必须显式覆盖主题里那条**：主题把 TextBox 当成"单行输入框"，
-        // Height 写死了（表单里好看），而日志这块要占满整片区域 —— 不覆盖就是一条被居中的细带，
-        // 文字还被裁掉一半。
-        Height = double.NaN,
-        MinHeight = 0,
-        VerticalAlignment = VerticalAlignment.Stretch,
-        HorizontalAlignment = HorizontalAlignment.Stretch,
-        VerticalContentAlignment = VerticalAlignment.Top,
-        HorizontalContentAlignment = HorizontalAlignment.Left,
-        BorderThickness = new Thickness(0),
-        Background = System.Windows.Media.Brushes.Transparent,
-        FontFamily = new System.Windows.Media.FontFamily("Microsoft YaHei UI, Consolas"),
-        FontSize = 13,
-        Padding = new Thickness(12),
+    private readonly ScrollViewer _scroller = new()
+    {
+        VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+        HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
     };
+
+    private readonly StringBuilder _transcript = new();
+
+    /// <summary>哪个模型显示在右边（左边是 A，右边是 B）。</summary>
+    private string? _rightSide;
+
+    /// <summary>离屏渲染检查用：指定哪个模型显示在右边。</summary>
+    public void SetRightSide(string? name) => _rightSide = name;
 
     private readonly Button _start = new() { Content = "开始讨论", Padding = new Thickness(18, 6, 18, 6) };
     private readonly Button _stop = new()
@@ -152,9 +148,11 @@ public sealed class DebateWindow : Window
 
         _reason.Width = 320;
 
+        _scroller.Content = _messages;
+
         var box = new Border
         {
-            Child = _log,
+            Child = _scroller,
             BorderThickness = new Thickness(1),
             CornerRadius = new CornerRadius(8),
             Background = System.Windows.Media.Brushes.White,
@@ -166,7 +164,7 @@ public sealed class DebateWindow : Window
         _refreshWindows.Click += (_, _) => RefreshWindowChoices();
         _start.Click += async (_, _) => await RunAsync();
         _stop.Click += (_, _) => _cts?.Cancel();
-        _copy.Click += (_, _) => Clipboard.SetText(_log.Text);
+        _copy.Click += (_, _) => Clipboard.SetText(_transcript.ToString());
         _copyPatch.Click += (_, _) =>
         {
             if (_patch.Length > 0)
@@ -276,7 +274,9 @@ public sealed class DebateWindow : Window
             return;
         }
 
-        _log.Clear();
+        _messages.Children.Clear();
+        _transcript.Clear();
+        _rightSide = providerB.Name;
         _start.IsEnabled = false;
         _copy.IsEnabled = false;
         _copyPatch.IsEnabled = false;
@@ -326,6 +326,10 @@ public sealed class DebateWindow : Window
                 _patch = outcome.Text;
                 _copyPatch.IsEnabled = true;
                 _copyPatch.Content = outcome.Verified ? "复制补丁" : "复制候选（未验证）";
+
+                // 验证过了就单独用一个窗口把补丁摆出来：聊天记录里那句话很容易被刷走。
+                if (outcome.Verified)
+                    BuildPatchWindow(outcome.Patch).ShowDialog();
             }
         }
         catch (Exception ex)
@@ -340,6 +344,87 @@ public sealed class DebateWindow : Window
             _cts?.Dispose();
             _cts = null;
         }
+    }
+
+    /// <summary>验证通过后单独摆出补丁 —— 聊天记录会被后面的话刷走，这一句值得单独看一眼。</summary>
+    public Window BuildPatchWindow(IReadOnlyList<string> patch)
+    {
+        var text = string.Join(Environment.NewLine, patch);
+
+        // 同样的坑：主题里的 TextBox 是固定高度，这里要撑开。
+        var box = new TextBox
+        {
+            Text = text,
+            IsReadOnly = true,
+            AcceptsReturn = true,
+            TextWrapping = TextWrapping.Wrap,
+            Height = double.NaN,
+            MinHeight = 72,
+            VerticalContentAlignment = VerticalAlignment.Top,
+            FontFamily = new System.Windows.Media.FontFamily("Microsoft YaHei UI"),
+            FontSize = 13.5,
+            Padding = new Thickness(10),
+            Margin = new Thickness(0, 12, 0, 0),
+        };
+
+        var copy = new Button
+        {
+            Content = "复制这几句", Padding = new Thickness(18, 6, 18, 6), IsDefault = true,
+        };
+
+        var close = new Button
+        {
+            Content = "关闭", Padding = new Thickness(18, 6, 18, 6), Margin = new Thickness(8, 0, 0, 0),
+            IsCancel = true,
+        };
+
+        var buttons = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            HorizontalAlignment = HorizontalAlignment.Right,
+            Margin = new Thickness(0, 14, 0, 0),
+        };
+
+        buttons.Children.Add(copy);
+        buttons.Children.Add(close);
+
+        var body = new StackPanel { Margin = new Thickness(20) };
+
+        body.Children.Add(new TextBlock
+        {
+            Text = "✓ 已验证：把下面这几句加到禁令末尾",
+            FontWeight = FontWeights.SemiBold,
+            TextWrapping = TextWrapping.Wrap,
+        });
+
+        body.Children.Add(new TextBlock
+        {
+            Text = "验证方式：把这几句接在禁令后面，用改过的禁令 + 这一页重新判了一次（不带讨论内容）—— "
+                   + "从严判断不会再和正常一起把这类页面放走。",
+            TextWrapping = TextWrapping.Wrap,
+            Margin = new Thickness(0, 8, 0, 0),
+            Foreground = (System.Windows.Media.Brush)Application.Current.FindResource("TextSecondary"),
+        });
+
+        body.Children.Add(box);
+        body.Children.Add(buttons);
+
+        var dialog = new Window
+        {
+            Title = "补丁（已验证）",
+            Width = 620,
+            SizeToContent = SizeToContent.Height,
+            WindowStartupLocation = WindowStartupLocation.CenterOwner,
+            Owner = this,
+            ShowInTaskbar = false,
+            ResizeMode = ResizeMode.NoResize,
+            Content = body,
+        };
+
+        copy.Click += (_, _) => Clipboard.SetText(text);
+        close.Click += (_, _) => dialog.Close();
+
+        return dialog;
     }
 
     /// <summary>
@@ -447,11 +532,112 @@ public sealed class DebateWindow : Window
         return dialog;
     }
 
-    private void Append(DebateLine line)
+    /// <summary>
+    /// 往"群里"发一条：模型带头像和气泡（左右分开），进度/提示居中成灰字。
+    /// 做成聊天样式不是为了好看 —— 讨论的关键是"谁在回谁"，纯文本一行行读不出这个结构。
+    /// </summary>
+    public void Append(DebateLine line)
     {
-        var prefix = line.IsSystem ? "· " : $"【{line.Speaker}】";
+        _transcript.Append(line.IsSystem ? $"· {line.Text}" : $"【{line.Speaker}】{line.Text}")
+                   .Append(Environment.NewLine)
+                   .Append(Environment.NewLine);
 
-        _log.AppendText($"{prefix}{line.Text}{Environment.NewLine}{Environment.NewLine}");
-        _log.ScrollToEnd();
+        _messages.Children.Add(line.IsSystem
+            ? SystemNote(line.Text)
+            : Message(line.Speaker, line.Text, right: line.Speaker == _rightSide));
+
+        _scroller.ScrollToEnd();
+    }
+
+    private static readonly string[] AvatarColors =
+    {
+        "#4C8BF5", "#34A853", "#F29900", "#A142F4", "#E8453C", "#12A4AF",
+    };
+
+    private static TextBlock SystemNote(string text) => new()
+    {
+        Text = text,
+        TextWrapping = TextWrapping.Wrap,
+        TextAlignment = TextAlignment.Center,
+        FontSize = 11.5,
+        LineHeight = 17,
+        Margin = new Thickness(28, 4, 28, 10),
+        Foreground = (System.Windows.Media.Brush)Application.Current.FindResource("TextSecondary"),
+    };
+
+    private static UIElement Avatar(string speaker)
+    {
+        var hash = speaker.Aggregate(0, (h, c) => unchecked(h * 31 + c));
+
+        var color = new System.Windows.Media.SolidColorBrush(
+            (System.Windows.Media.Color)System.Windows.Media.ColorConverter
+                .ConvertFromString(AvatarColors[Math.Abs(hash) % AvatarColors.Length])!);
+
+        return new Border
+        {
+            Width = 34,
+            Height = 34,
+            CornerRadius = new CornerRadius(17),
+            Background = color,
+            VerticalAlignment = VerticalAlignment.Top,
+            Child = new TextBlock
+            {
+                Text = string.IsNullOrEmpty(speaker) ? "?" : speaker[..1].ToUpperInvariant(),
+                Foreground = System.Windows.Media.Brushes.White,
+                FontSize = 14,
+                FontWeight = FontWeights.SemiBold,
+                HorizontalAlignment = HorizontalAlignment.Center,
+                VerticalAlignment = VerticalAlignment.Center,
+            },
+        };
+    }
+
+    private static UIElement Message(string speaker, string text, bool right)
+    {
+        var row = new DockPanel { LastChildFill = true, Margin = new Thickness(0, 0, 0, 12) };
+        var avatar = Avatar(speaker);
+
+        DockPanel.SetDock(avatar, right ? Dock.Right : Dock.Left);
+        row.Children.Add(avatar);
+
+        var bubble = new Border
+        {
+            MaxWidth = 470,
+            Padding = new Thickness(12, 8, 12, 8),
+            CornerRadius = new CornerRadius(10),
+            Background = new System.Windows.Media.SolidColorBrush(right
+                ? System.Windows.Media.Color.FromRgb(0xD6, 0xE9, 0xFF)
+                : System.Windows.Media.Color.FromRgb(0xF2, 0xF3, 0xF5)),
+            HorizontalAlignment = right ? HorizontalAlignment.Right : HorizontalAlignment.Left,
+            Child = new TextBlock
+            {
+                Text = text,
+                TextWrapping = TextWrapping.Wrap,
+                FontSize = 13,
+                LineHeight = 20,
+                Foreground = new System.Windows.Media.SolidColorBrush(
+                    System.Windows.Media.Color.FromRgb(0x1A, 0x1A, 0x1A)),
+            },
+        };
+
+        var stack = new StackPanel
+        {
+            Margin = new Thickness(10, 0, 10, 0),
+            HorizontalAlignment = right ? HorizontalAlignment.Right : HorizontalAlignment.Left,
+        };
+
+        stack.Children.Add(new TextBlock
+        {
+            Text = speaker,
+            FontSize = 11,
+            Margin = new Thickness(2, 0, 2, 3),
+            Foreground = (System.Windows.Media.Brush)Application.Current.FindResource("TextSecondary"),
+            HorizontalAlignment = right ? HorizontalAlignment.Right : HorizontalAlignment.Left,
+        });
+
+        stack.Children.Add(bubble);
+        row.Children.Add(stack);
+
+        return row;
     }
 }

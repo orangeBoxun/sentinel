@@ -78,7 +78,7 @@ public class DebateTests
             {
                 text = Diagnosis;
             }
-            else if (body.Contains("第一段（一句话）", StringComparison.Ordinal))
+            else if (body.Contains("第一段（最多 3 行）", StringComparison.Ordinal))
             {
                 text = model == "a" ? Fix : Proposal;
             }
@@ -157,7 +157,11 @@ public class DebateTests
 
         // 判错的一家拿到了完整诊断。
         Assert.Contains("没看搜索词", handler.Calls[3].Body);
-        Assert.Contains("第一段（一句话）", handler.Calls[3].Body);
+        Assert.Contains("第一段（最多 3 行）", handler.Calls[3].Body);
+
+        // 自辩之后，判对的一方要正面回应 —— 让它把话说完，而不是各说各话。
+        Assert.Equal("b", handler.Calls[4].Model);
+        Assert.Contains("听了你的诊断之后这样说", handler.Calls[4].Body);
     }
 
     [Fact]
@@ -170,8 +174,12 @@ public class DebateTests
         Assert.Single(outcome.Patch);
 
         // 验证用的那次判定，提示词里必须出现补丁那句话。
-        Assert.Contains("就从严判违规", handler.Calls[4].Body);
         Assert.Contains("就从严判违规", handler.Calls[5].Body);
+        Assert.Contains("就从严判违规", handler.Calls[6].Body);
+
+        // 而且不带讨论里的任何内容：判定提示词里不该出现"诊断""自辩"这些东西。
+        Assert.DoesNotContain("听了你的诊断", handler.Calls[5].Body);
+        Assert.DoesNotContain("另一个模型", handler.Calls[5].Body);
     }
 
     [Fact]
@@ -185,8 +193,8 @@ public class DebateTests
         Assert.False(outcome!.Verified);
         Assert.Equal(3, outcome.Rounds);
 
-        // 每轮：诊断 + 写补丁 + 两次验证；外加最开始两次独立判断。
-        Assert.Equal(14, calls.Calls.Count);
+        // 每轮：诊断 + 自辩/补丁 + 回应 + 两次验证；外加最开始两次独立判断。
+        Assert.Equal(17, calls.Calls.Count);
 
         Assert.Contains(lines, l => l.IsSystem && l.Text.Contains("还没对上"));
         Assert.Contains(lines, l => l.IsSystem && l.Text.Contains("没验证过"));
@@ -220,8 +228,8 @@ public class DebateTests
         Assert.Equal(6, outcome!.Rounds);
         Assert.False(outcome.Verified);
 
-        // 第二批的第一条提示词里就要能看到补充信息（前 14 次是第一批）。
-        Assert.Contains("这一页是我在查资料，不是摸鱼", handler.Calls[14].Body);
+        // 第二批的第一条提示词里就要能看到补充信息（前 17 次是第一批）。
+        Assert.Contains("这一页是我在查资料，不是摸鱼", handler.Calls[17].Body);
 
         Assert.Contains(lines, l => l.IsSystem && l.Text.Contains("你补充的信息"));
         Assert.Contains(lines, l => l.IsSystem && l.Text.Contains("你选择收工"));
