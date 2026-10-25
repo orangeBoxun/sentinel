@@ -49,6 +49,45 @@ public sealed class DebateWindow : Window
     /// <summary>离屏渲染检查用：指定哪个模型显示在右边。</summary>
     public void SetRightSide(string? name) => _rightSide = name;
 
+    /// <summary>
+    /// 往剪贴板写文本。远程桌面、输入法、剪贴板管理器都可能正占着剪贴板，
+    /// 这时 OleSetClipboard 会抛 CLIPBRD_E_CANT_OPEN —— 在事件处理器里没接住的话，
+    /// 会一路炸回 RunAsync 的 catch（用户看到的就是"讨论出错了"，而且窗口卡在那儿）。
+    /// 所以这里短间隔重试几次，失败就返回 false，由调用处提示。
+    /// </summary>
+    private static bool TryCopy(string text)
+    {
+        if (string.IsNullOrEmpty(text))
+            return false;
+
+        // 重试别太多：WPF 内部本来就会重试，外面再叠一层只会让"卡一下"变成"卡几秒"。
+        for (var i = 0; i < 3; i++)
+        {
+            try
+            {
+                // copy: true —— 程序关了以后剪贴板里还在。
+                Clipboard.SetDataObject(text, true);
+                return true;
+            }
+            catch (Exception)
+            {
+                Thread.Sleep(50);
+            }
+        }
+
+        return false;
+    }
+
+    private void CopyOrWarn(string text, string what)
+    {
+        if (TryCopy(text))
+            return;
+
+        Append(new DebateLine("系统",
+            $"复制{what}失败：剪贴板被别的程序占着（远程桌面、输入法、剪贴板管理器都可能）。稍后再点一次。",
+            IsSystem: true));
+    }
+
     private readonly Button _start = new() { Content = "开始讨论", Padding = new Thickness(18, 6, 18, 6) };
     private readonly Button _stop = new()
     {
@@ -164,11 +203,11 @@ public sealed class DebateWindow : Window
         _refreshWindows.Click += (_, _) => RefreshWindowChoices();
         _start.Click += async (_, _) => await RunAsync();
         _stop.Click += (_, _) => _cts?.Cancel();
-        _copy.Click += (_, _) => Clipboard.SetText(_transcript.ToString());
+        _copy.Click += (_, _) => CopyOrWarn(_transcript.ToString(), "讨论记录");
         _copyPatch.Click += (_, _) =>
         {
             if (_patch.Length > 0)
-                Clipboard.SetText(_patch);
+                CopyOrWarn(_patch, "补丁");
         };
         _close.Click += (_, _) => Close();
         Closed += (_, _) => _cts?.Cancel();
@@ -329,7 +368,18 @@ public sealed class DebateWindow : Window
 
                 // 验证过了就单独用一个窗口把补丁摆出来：聊天记录里那句话很容易被刷走。
                 if (outcome.Verified)
-                    BuildPatchWindow(outcome.Patch).ShowDialog();
+                {
+                    try
+                    {
+                        BuildPatchWindow(outcome.Patch).ShowDialog();
+                    }
+                    catch (Exception ex)
+                    {
+                        // 这个窗口里的任何异常都不该把"讨论已经成功"这件事冲掉。
+                        Append(new DebateLine("系统",
+                            $"补丁窗口出错了：{ex.GetType().Name}：{ex.Message}", IsSystem: true));
+                    }
+                }
             }
         }
         catch (Exception ex)
@@ -421,7 +471,16 @@ public sealed class DebateWindow : Window
             Content = body,
         };
 
-        copy.Click += (_, _) => Clipboard.SetText(text);
+        copy.Click += (_, _) =>
+        {
+            if (TryCopy(text))
+                return;
+
+            MessageBox.Show(dialog,
+                "剪贴板被别的程序占着（远程桌面、输入法、剪贴板管理器都可能）。"
+                + "稍后再点一次，或者直接在上面那个框里选中文字、按 Ctrl+C。",
+                "没复制上", MessageBoxButton.OK, MessageBoxImage.Warning);
+        };
         close.Click += (_, _) => dialog.Close();
 
         return dialog;
