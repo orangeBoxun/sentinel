@@ -20,6 +20,12 @@ public sealed class UsageCounters
 
     /// <summary>有多少次请求真的带了 usage —— 没带的话上面两个数是偏小的。</summary>
     public int Reported { get; set; }
+
+    /// <summary>命中缓存的输入 token。服务商不报的请求不计入。</summary>
+    public long CachedTokens { get; set; }
+
+    /// <summary>有多少次请求带了缓存命中信息。</summary>
+    public int CacheReported { get; set; }
 }
 
 /// <summary>
@@ -61,12 +67,15 @@ public sealed class UsageStore
     }
 
     /// <summary>记一次调用。没拿到判定的那次也记 —— 失败次数本身就是有用的信息。</summary>
-    public void Record(string providerId, int? promptTokens, int? completionTokens, bool answered)
+    public void Record(string providerId, int? promptTokens, int? completionTokens, bool answered,
+                       int? cachedTokens = null)
     {
         if (string.IsNullOrWhiteSpace(providerId))
             return;
 
-        var day = DateTimeOffset.Now.ToString("yyyy-MM-dd");
+        // 按**小时**分桶：日/周的统计从小时桶里聚合出来。这样「今天」能按时段看，
+        // 而按天/按月的视图一点不受影响。
+        var day = DateTimeOffset.Now.ToString("yyyy-MM-ddTHH");
 
         lock (_gate)
         {
@@ -94,6 +103,12 @@ public sealed class UsageStore
                 counters.Reported++;
             }
 
+            if (cachedTokens is { } cached)
+            {
+                counters.CachedTokens += cached;
+                counters.CacheReported++;
+            }
+
             Prune();
             Save();
         }
@@ -109,9 +124,9 @@ public sealed class UsageStore
 
         lock (_gate)
         {
-            foreach (var (day, providers) in _days)
+            foreach (var (bucket, providers) in _days)
             {
-                if (string.CompareOrdinal(day, from) < 0)
+                if (string.CompareOrdinal(DayOf(bucket), from) < 0)
                     continue;
 
                 foreach (var (id, counters) in providers)
@@ -127,6 +142,8 @@ public sealed class UsageStore
                     sum.PromptTokens += counters.PromptTokens;
                     sum.CompletionTokens += counters.CompletionTokens;
                     sum.Reported += counters.Reported;
+                    sum.CachedTokens += counters.CachedTokens;
+                    sum.CacheReported += counters.CacheReported;
                 }
             }
         }
@@ -151,22 +168,77 @@ public sealed class UsageStore
             for (var offset = days - 1; offset >= 0; offset--)
             {
                 var day = today.AddDays(-offset).ToString("yyyy-MM-dd");
-
-                result.Add(_days.TryGetValue(day, out var providers)
-                    ? (day, providers)
-                    : (day, new Dictionary<string, UsageCounters>(StringComparer.Ordinal)));
+                result.Add((day, BucketsOf(day)));
             }
         }
 
         return result;
     }
 
+    /// <summary>
+    /// 按小时摊开（今天 00:00 到现在）——「今天」那张图按时段看。
+    ///
+    /// <para>
+    /// 老版本的记录是按天存的（键里没有小时），它们没法摊到具体时段，只能出现在按天的视图里。
+    /// </para>
+    /// </summary>
+    public IReadOnlyList<(string Slot, IReadOnlyDictionary<string, UsageCounters> Providers)> Hourly()
+    {
+        var now = DateTimeOffset.Now;
+        var result = new List<(string, IReadOnlyDictionary<string, UsageCounters>)>();
+
+        lock (_gate)
+        {
+            for (var hour = 0; hour <= now.Hour; hour++)
+            {
+                var stamp = now.ToString("yyyy-MM-dd") + "T" + hour.ToString("00");
+                result.Add(($"{hour:00}:00", BucketsOf(stamp)));
+            }
+        }
+
+        return result;
+    }
+
+    /// <summary>把 key 以某天/某小时开头的桶合并起来。</summary>
+    private Dictionary<string, UsageCounters> BucketsOf(string prefix)
+    {
+        var merged = new Dictionary<string, UsageCounters>(StringComparer.Ordinal);
+
+        foreach (var (bucket, providers) in _days)
+        {
+            if (!bucket.StartsWith(prefix, StringComparison.Ordinal))
+                continue;
+
+            foreach (var (id, counters) in providers)
+            {
+                if (!merged.TryGetValue(id, out var sum))
+                {
+                    sum = new UsageCounters();
+                    merged[id] = sum;
+                }
+
+                sum.Requests += counters.Requests;
+                sum.Failures += counters.Failures;
+                sum.PromptTokens += counters.PromptTokens;
+                sum.CompletionTokens += counters.CompletionTokens;
+                sum.Reported += counters.Reported;
+                sum.CachedTokens += counters.CachedTokens;
+                sum.CacheReported += counters.CacheReported;
+            }
+        }
+
+        return merged;
+    }
+
+    /// <summary>桶键的日期部分（老数据是 "yyyy-MM-dd"，新数据是 "yyyy-MM-ddTHH"）。</summary>
+    private static string DayOf(string bucket) => bucket.Length >= 10 ? bucket[..10] : bucket;
+
     private void Prune()
     {
         var oldest = DateTimeOffset.Now.Date.AddDays(-KeepDays).ToString("yyyy-MM-dd");
 
-        foreach (var day in _days.Keys.Where(d => string.CompareOrdinal(d, oldest) < 0).ToList())
-            _days.Remove(day);
+        foreach (var bucket in _days.Keys.Where(k => string.CompareOrdinal(DayOf(k), oldest) < 0).ToList())
+            _days.Remove(bucket);
     }
 
     private static Dictionary<string, Dictionary<string, UsageCounters>> Load(string path)

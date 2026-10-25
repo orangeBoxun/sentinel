@@ -63,7 +63,8 @@ public sealed record ModelCallResult(
     string? Reason = null,
     string? Message = null,
     int? PromptTokens = null,
-    int? CompletionTokens = null);
+    int? CompletionTokens = null,
+    int? CachedTokens = null);
 
 /// <summary>取模型列表的结果。<paramref name="Message"/> 无论成败都要能看懂 —— 取不到的时候，
 /// 用户第一件要知道的事是"你试的是哪个地址"。</summary>
@@ -192,19 +193,25 @@ public sealed class ModelClient
                     ? "模型的思考把 max_tokens 用完了，回答还没写就被截断。把模型换成不带思考的那种，或者让它想得短一点。"
                     : "回了 200，但里面没有能读的文字。";
 
-                var (promptUsed, completionUsed) = ReadUsage(body);
+                var (promptUsed, completionUsed, cachedUsed) = ReadUsage(body);
 
                 return new ModelCallResult(
                     ModelCallOutcome.NoAnswer,
                     Message: $"{why}{Shorten(body)}",
                     PromptTokens: promptUsed,
-                    CompletionTokens: completionUsed);
+                    CompletionTokens: completionUsed,
+                    CachedTokens: cachedUsed);
             }
 
             var verdict = ParseVerdict(text);
-            var (promptTokens, completionTokens) = ReadUsage(body);
+            var (promptTokens, completionTokens, cachedTokens) = ReadUsage(body);
 
-            verdict = verdict with { PromptTokens = promptTokens, CompletionTokens = completionTokens };
+            verdict = verdict with
+            {
+                PromptTokens = promptTokens,
+                CompletionTokens = completionTokens,
+                CachedTokens = cachedTokens,
+            };
 
             return verdict.Outcome == ModelCallOutcome.NoAnswer
                 ? verdict with
@@ -760,23 +767,30 @@ public sealed class ModelClient
     /// 从回复里读 usage。各家字段名不同：OpenAI 那套是 prompt/completion_tokens，
     /// Anthropic 和 Responses 是 input/output_tokens。读不到就给 null（有的中转站根本不回）。
     /// </summary>
-    private static (int? Prompt, int? Completion) ReadUsage(string body)
+    private static (int? Prompt, int? Completion, int? Cached) ReadUsage(string body)
     {
         try
         {
             var usage = JsonNode.Parse(body)?["usage"];
 
             if (usage is null)
-                return (null, null);
+                return (null, null, null);
 
             var prompt = (usage["prompt_tokens"] ?? usage["input_tokens"])?.GetValue<int>();
             var completion = (usage["completion_tokens"] ?? usage["output_tokens"])?.GetValue<int>();
 
-            return (prompt, completion);
+            // 缓存命中各家的字段不一样：OpenAI 塞在 prompt_tokens_details 里，
+            // DeepSeek 有自己的 prompt_cache_hit_tokens，Anthropic 是 cache_read_input_tokens。
+            // 都没给就返回 null —— 界面上显示"—"，不拿 0 冒充。
+            var cached = (usage["prompt_tokens_details"]?["cached_tokens"]
+                          ?? usage["prompt_cache_hit_tokens"]
+                          ?? usage["cache_read_input_tokens"])?.GetValue<int>();
+
+            return (prompt, completion, cached);
         }
         catch
         {
-            return (null, null);
+            return (null, null, null);
         }
     }
 

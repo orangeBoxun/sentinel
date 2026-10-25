@@ -2084,7 +2084,7 @@ public partial class MainWindow : Window
         {
             UsageRangeBox.ItemsSource = new List<Choice<int>>
             {
-                new(1, "今天"),
+                new(0, "今天（按小时）"),
                 new(7, "近 7 天"),
                 new(30, "近 30 天"),
             };
@@ -2118,12 +2118,18 @@ public partial class MainWindow : Window
     {
         var store = _state.Monitor.Usage;
 
-        var days = (UsageRangeBox.SelectedItem as Choice<int>)?.Value ?? 7;
+        var range = (UsageRangeBox.SelectedItem as Choice<int>)?.Value ?? 7;
         var metric = (UsageMetricBox.SelectedItem as Choice<string>)?.Value ?? "requests";
         var metricLabel = (UsageMetricBox.SelectedItem as Choice<string>)?.Display ?? "请求数";
         var providerId = (UsageProviderBox.SelectedItem as Choice<string?>)?.Value;
 
-        var daily = store.Daily(days);
+        // 0 = 今天：按小时摊开（00:00 到现在）；其余按天。
+        List<(string Label, IReadOnlyDictionary<string, Sentinel.Core.Model.UsageCounters> Providers)> buckets =
+            range == 0
+                ? store.Hourly().Select(b => (b.Slot, b.Providers)).ToList()
+                : store.Daily(range).Select(b => (b.Day, b.Providers)).ToList();
+
+        var daily = buckets;
 
         var ids = daily
             .SelectMany(d => d.Providers.Keys)
@@ -2143,19 +2149,77 @@ public partial class MainWindow : Window
             _ => c.Requests,
         };
 
-        double ValueOn(string id, (string Day, IReadOnlyDictionary<string, Sentinel.Core.Model.UsageCounters> Providers) day) =>
-            day.Providers.TryGetValue(id, out var counters) ? MetricOf(counters) : 0;
+        double ValueOn(string id, (string Label, IReadOnlyDictionary<string, Sentinel.Core.Model.UsageCounters> Providers) bucket) =>
+            bucket.Providers.TryGetValue(id, out var counters) ? MetricOf(counters) : 0;
 
-        var labels = daily.Select(d => d.Day.Length >= 10 ? d.Day[5..] : d.Day).ToList();
+        var labels = daily
+            .Select(d => range == 0 ? d.Label : d.Label.Length >= 10 ? d.Label[5..] : d.Label)
+            .ToList();
 
         var series = shown
             .Select((id, index) => new Charts.Series(
                 NameOf(id), Charts.ColorOf(index), daily.Select(d => ValueOn(id, d)).ToArray()))
             .ToList();
 
-        UsageLineTitle.Text = $"每天（{metricLabel}）";
-        UsageBarTitle.Text = $"各服务商合计（{metricLabel}）";
-        UsagePieTitle.Text = $"占比（{metricLabel}）";
+        UsageLineTitle.Text = range == 0
+            ? $"今天（按小时 · {metricLabel}）"
+            : $"每天（{metricLabel}）";
+        var span = range == 0 ? "今天" : range == 7 ? "近 7 天" : "近 30 天";
+
+        UsageBarTitle.Text = $"各服务商合计（{span} · {metricLabel}）";
+        UsagePieTitle.Text = $"占比（{span} · {metricLabel}）";
+
+        var rangeTotals = new Dictionary<string, Sentinel.Core.Model.UsageCounters>(StringComparer.Ordinal);
+
+        foreach (var bucket in daily)
+        {
+            foreach (var (id, counters) in bucket.Providers)
+            {
+                if (!rangeTotals.TryGetValue(id, out var sum))
+                {
+                    sum = new Sentinel.Core.Model.UsageCounters();
+                    rangeTotals[id] = sum;
+                }
+
+                sum.Requests += counters.Requests;
+                sum.Failures += counters.Failures;
+                sum.PromptTokens += counters.PromptTokens;
+                sum.CompletionTokens += counters.CompletionTokens;
+                sum.Reported += counters.Reported;
+            }
+        }
+
+        var totalRequests = rangeTotals.Values.Sum(c => c.Requests);
+        var totalFailures = rangeTotals.Values.Sum(c => c.Failures);
+        var totalTokens = rangeTotals.Values.Sum(c => c.PromptTokens + c.CompletionTokens);
+        var totalReported = rangeTotals.Values.Sum(c => c.Reported);
+
+        UsageRequestsText.Text = totalRequests > 0 ? totalRequests.ToString("N0") : "—";
+        UsageFailuresText.Text = totalRequests > 0 ? totalFailures.ToString("N0") : "—";
+        UsageTokensText.Text = totalReported > 0 ? totalTokens.ToString("N0") : "—";
+        UsageRateText.Text = totalRequests > 0
+            ? $"{(double)totalFailures / totalRequests:P0}"
+            : "—";
+
+        // 缓存命中率：分母按各家语义分开算 —— OpenAI 的 prompt_tokens 里**含**缓存命中的部分，
+        // Anthropic 的 input_tokens **不含**（命中在 cache_read 里单独给）。混在一起算会差一倍。
+        double cachedHits = 0;
+        double cachedBase = 0;
+
+        foreach (var (id, counters) in rangeTotals)
+        {
+            if (counters.CacheReported == 0)
+                continue;
+
+            var format = _state.Config.Models.FirstOrDefault(m => m.Id == id)?.Format;
+
+            cachedHits += counters.CachedTokens;
+            cachedBase += format == Sentinel.Core.Models.ApiFormat.Anthropic
+                ? counters.PromptTokens + counters.CachedTokens
+                : counters.PromptTokens;
+        }
+
+        UsageCacheText.Text = cachedBase > 0 ? $"{cachedHits / cachedBase:P0}" : "—";
 
         Charts.Line(UsageLineChart, labels, series);
 

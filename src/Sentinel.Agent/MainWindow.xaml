@@ -884,6 +884,49 @@
 
                         <ScrollViewer Margin="0,16,0,0" VerticalScrollBarVisibility="Auto">
                             <StackPanel>
+                                <!-- 汇总（跟着上面的时间范围走） -->
+                                <UniformGrid Columns="5" Margin="0,0,0,14">
+                                    <Border Style="{StaticResource Card}" Margin="0,0,10,0">
+                                        <StackPanel>
+                                            <TextBlock Text="总请求数" Style="{StaticResource Caption}" />
+                                            <TextBlock x:Name="UsageRequestsText" FontSize="24" Margin="0,4,0,0"
+                                                       Foreground="{StaticResource TextPrimary}" Text="—" />
+                                        </StackPanel>
+                                    </Border>
+
+                                    <Border Style="{StaticResource Card}" Margin="0,0,10,0">
+                                        <StackPanel>
+                                            <TextBlock Text="失败数" Style="{StaticResource Caption}" />
+                                            <TextBlock x:Name="UsageFailuresText" FontSize="24" Margin="0,4,0,0"
+                                                       Foreground="{StaticResource TextPrimary}" Text="—" />
+                                        </StackPanel>
+                                    </Border>
+
+                                    <Border Style="{StaticResource Card}" Margin="0,0,10,0">
+                                        <StackPanel>
+                                            <TextBlock Text="总 token" Style="{StaticResource Caption}" />
+                                            <TextBlock x:Name="UsageTokensText" FontSize="24" Margin="0,4,0,0"
+                                                       Foreground="{StaticResource TextPrimary}" Text="—" />
+                                        </StackPanel>
+                                    </Border>
+
+                                    <Border Style="{StaticResource Card}" Margin="0,0,10,0">
+                                        <StackPanel>
+                                            <TextBlock Text="失败率" Style="{StaticResource Caption}" />
+                                            <TextBlock x:Name="UsageRateText" FontSize="24" Margin="0,4,0,0"
+                                                       Foreground="{StaticResource TextPrimary}" Text="—" />
+                                        </StackPanel>
+                                    </Border>
+
+                                    <Border Style="{StaticResource Card}">
+                                        <StackPanel>
+                                            <TextBlock Text="缓存命中率" Style="{StaticResource Caption}" />
+                                            <TextBlock x:Name="UsageCacheText" FontSize="24" Margin="0,4,0,0"
+                                                       Foreground="{StaticResource TextPrimary}" Text="—" />
+                                        </StackPanel>
+                                    </Border>
+                                </UniformGrid>
+
                                 <!-- 折线：每天 -->
                                 <Border Style="{StaticResource Card}" Margin="0,0,0,14">
                                     <StackPanel>
