@@ -1,7 +1,6 @@
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
-using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
 using System.Windows.Media.Effects;
@@ -18,8 +17,8 @@ namespace Sentinel.Agent;
 /// 所以窗口一改尺寸就重画一次（见 <c>UsageCanvas_SizeChanged</c>）。
 /// </para>
 /// <para>
-/// 悬停提示是自绘的（<see cref="ChartTooltip"/>），不是 WPF 自带的 ToolTip：
-/// 自带那个弹出延迟长、样式也跟不上，而且没法做"换元素时淡入"的动画。
+/// 悬停提示是自绘的（<see cref="ChartTooltip"/>），**锚在数据元素上**而不是跟着鼠标走：
+/// Popup 是独立窗口，每移动一像素就挪一次会明显抖动，也会离鼠标越来越远。
 /// </para>
 /// </summary>
 internal static class Charts
@@ -37,6 +36,8 @@ internal static class Charts
     private static readonly Brush Axis = Freeze("#E3E3E3");
     private static readonly Brush Ink = Freeze("#6B6B6B");
     private static readonly Brush InkFaint = Freeze("#9A9A9A");
+    private static readonly Brush Guide = Freeze("#C9C9C9");
+    private static readonly Brush RowHighlight = Freeze("#F2F4F7");
 
     private const double LabelSize = 10.5;
 
@@ -81,6 +82,12 @@ internal static class Charts
             AddLabel(canvas, Shorten(labels[i]), x, top + plotHeight + 6, centerOn: true);
         }
 
+        // 每一列的点单独记着，悬停时把那一列的点放大。
+        var columnDots = new List<Ellipse>[Math.Max(1, labels.Count)];
+
+        for (var i = 0; i < columnDots.Length; i++)
+            columnDots[i] = new List<Ellipse>();
+
         foreach (var item in series)
         {
             var points = new PointCollection();
@@ -103,18 +110,30 @@ internal static class Charts
                 StrokeLineJoin = PenLineJoin.Round,
             });
 
-            foreach (var point in points)
+            for (var i = 0; i < points.Count && i < columnDots.Length; i++)
             {
                 var dot = new Ellipse { Width = 6, Height = 6, Fill = item.Brush };
-                Canvas.SetLeft(dot, point.X - 3);
-                Canvas.SetTop(dot, point.Y - 3);
+                Canvas.SetLeft(dot, points[i].X - 3);
+                Canvas.SetTop(dot, points[i].Y - 3);
                 canvas.Children.Add(dot);
+                columnDots[i].Add(dot);
             }
         }
 
-        // 每一列铺一块透明的"命中区"：悬停整列都算，而不是只对着那几个小圆点。
         if (tip is null || labels.Count == 0)
             return;
+
+        // 竖向参考线：悬停时出现，标明看的是哪一列。
+        var guide = new Line
+        {
+            Y1 = top,
+            Y2 = top + plotHeight,
+            Stroke = Guide,
+            StrokeThickness = 1,
+            Opacity = 0,
+        };
+
+        canvas.Children.Insert(0, guide);
 
         var columnWidth = labels.Count == 1 ? plotWidth : plotWidth / (double)(labels.Count - 1);
 
@@ -137,7 +156,25 @@ internal static class Charts
             // **必须拷贝到局部变量**：for 的循环变量是所有 lambda 共用的，循环结束后
             // 它停在 labels.Count —— 鼠标一移上去就是越界下标，直接崩进程。
             var column = i;
-            Wire(canvas, hit, () => tip(column));
+            var anchorX = centerX;
+
+            Wire(canvas, hit, () => tip(column), new Point(anchorX, top + 4),
+                enter: () =>
+                {
+                    guide.X1 = anchorX;
+                    guide.X2 = anchorX;
+                    Fade(guide, 1);
+
+                    foreach (var dot in columnDots[column])
+                        Grow(dot, 1.7);
+                },
+                leave: () =>
+                {
+                    Fade(guide, 0);
+
+                    foreach (var dot in columnDots[column])
+                        Grow(dot, 1);
+                });
         }
     }
 
@@ -175,13 +212,28 @@ internal static class Charts
             var (label, value) = items[i];
             var centerY = rowHeight * i + rowHeight / 2;
 
+            var rowBrush = new Rectangle
+            {
+                Width = width,
+                Height = Math.Max(6, rowHeight - 2),
+                RadiusX = 6,
+                RadiusY = 6,
+                Fill = RowHighlight,
+                Opacity = 0,
+            };
+
+            Canvas.SetLeft(rowBrush, 0);
+            Canvas.SetTop(rowBrush, rowHeight * i + 1);
+            canvas.Children.Add(rowBrush);
+
             AddLabel(canvas, Shorten(label, 16), 6, centerY - LabelSize * 0.8, maxWidth: labelWidth - 10);
 
             var length = barWidth * (value / max);
+            Rectangle? bar = null;
 
             if (length > 0.5)
             {
-                var bar = new Rectangle
+                bar = new Rectangle
                 {
                     Width = length,
                     Height = barHeight,
@@ -201,13 +253,30 @@ internal static class Charts
             if (tip is null)
                 continue;
 
+            var row = i;
+            var rowAnchor = new Point(labelWidth, rowHeight * i + 2);
+            var highlightedBar = bar;
+
             var hit = new Rectangle { Width = width, Height = rowHeight, Fill = Brushes.Transparent };
             Canvas.SetLeft(hit, 0);
             Canvas.SetTop(hit, rowHeight * i);
             canvas.Children.Add(hit);
 
-            var row = i;   // 同上：循环变量不能直接进闭包
-            Wire(canvas, hit, () => tip(row));
+            Wire(canvas, hit, () => tip(row), rowAnchor,
+                enter: () =>
+                {
+                    Fade(rowBrush, 1);
+
+                    if (highlightedBar is not null)
+                        Grow(highlightedBar, 1.08);
+                },
+                leave: () =>
+                {
+                    Fade(rowBrush, 0);
+
+                    if (highlightedBar is not null)
+                        Grow(highlightedBar, 1);
+                });
         }
     }
 
@@ -250,7 +319,15 @@ internal static class Charts
             if (tip is not null)
             {
                 var index = i;
-                Wire(canvas, slice, () => tip(index));
+                var mid = PointOn(center, radius * 0.75, startAngle + sweep / 2);
+
+                // 悬停时扇区稍微鼓出来一点（以饼心为原点缩放）。
+                var transform = new ScaleTransform(1, 1, center.X, center.Y);
+                slice.RenderTransform = transform;
+
+                Wire(canvas, slice, () => tip(index), mid,
+                    enter: () => Scale(transform, 1.04),
+                    leave: () => Scale(transform, 1));
             }
 
             startAngle += sweep;
@@ -294,34 +371,80 @@ internal static class Charts
         }
     }
 
-    private static void Wire(Canvas canvas, UIElement element, Func<Tip?> content)
+    private static ChartTooltip EnsureTip(Canvas canvas)
     {
-        var tooltip = canvas.Tag as ChartTooltip;
+        if (canvas.Tag is ChartTooltip existing)
+            return existing;
 
-        if (tooltip is null)
-        {
-            tooltip = new ChartTooltip(canvas);
-            canvas.Tag = tooltip;
-        }
+        var created = new ChartTooltip(canvas);
+        canvas.Tag = created;
+        return created;
+    }
 
-        var hover = tooltip;
+    private static void Wire(Canvas canvas, UIElement hit, Func<Tip?> content, Point anchor,
+                             Action? enter = null, Action? leave = null)
+    {
+        var tooltip = EnsureTip(canvas);
 
-        element.MouseEnter += (_, _) =>
+        hit.MouseEnter += (_, _) =>
         {
             try
             {
+                enter?.Invoke();
+
                 if (content() is { } tip)
-                    hover.Show(element, tip, Mouse.GetPosition(canvas));
+                    tooltip.Show(hit, tip, anchor);
             }
             catch
             {
                 // 一次悬浮窗出错不该让整个程序死 —— 这张图只是没有提示。
-                hover.Close();
+                tooltip.Close();
             }
         };
 
-        element.MouseMove += (_, _) => hover.Move(Mouse.GetPosition(canvas));
-        element.MouseLeave += (_, _) => hover.Hide(element);
+        hit.MouseLeave += (_, _) =>
+        {
+            try
+            {
+                leave?.Invoke();
+            }
+            catch
+            {
+                // 收尾失败无所谓。
+            }
+
+            tooltip.Hide(hit);
+        };
+    }
+
+    private static void Fade(UIElement element, double to) =>
+        element.BeginAnimation(UIElement.OpacityProperty,
+            new DoubleAnimation(to, TimeSpan.FromMilliseconds(110))
+            {
+                EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut },
+            });
+
+    /// <summary>以自身中心为原点缩放（放大一点表示"被指到了"）。</summary>
+    private static void Grow(FrameworkElement element, double scale)
+    {
+        if (element.RenderTransform is not ScaleTransform transform)
+        {
+            transform = new ScaleTransform(1, 1, element.Width / 2, element.Height / 2);
+            element.RenderTransform = transform;
+        }
+
+        Scale(transform, scale);
+    }
+
+    private static void Scale(ScaleTransform transform, double to)
+    {
+        var ease = new CubicEase { EasingMode = EasingMode.EaseOut };
+
+        transform.BeginAnimation(ScaleTransform.ScaleXProperty,
+            new DoubleAnimation(to, TimeSpan.FromMilliseconds(100)) { EasingFunction = ease });
+
+        transform.BeginAnimation(ScaleTransform.ScaleYProperty,
+            new DoubleAnimation(to, TimeSpan.FromMilliseconds(100)) { EasingFunction = ease });
     }
 
     // ------------------------------------------------------------------ 内部
@@ -436,15 +559,18 @@ internal static class Charts
 }
 
 /// <summary>
-/// 图表上的悬停卡片：跟着鼠标走、换一个元素时淡入 + 轻微上移，而不是直接闪出来。
+/// 图表上的悬停卡片：**锚在数据元素上**（不是跟着鼠标），换一个元素时淡入 + 轻微上移。
 ///
 /// <para>
-/// 不用 WPF 自带的 ToolTip：它有自己的弹出延迟和样式，还没法做"同一个窗口里换内容"的动画。
-/// 这里用一个跟着位置走的 <see cref="Popup"/>，内容是每次重建的几行文字。
+/// 之前每移动一像素就 SetOffset 一次：Popup 是独立窗口，这样挪会明显抖动，而且看起来
+/// 总离鼠标很远。图表上的提示本来就该贴着数据，不该追着指针跑。
 /// </para>
 /// </summary>
 internal sealed class ChartTooltip
 {
+    private const double CardWidth = 210;
+    private const double CardHeight = 96;
+
     private readonly Popup _popup;
     private readonly Border _card;
     private readonly StackPanel _rows;
@@ -488,13 +614,11 @@ internal sealed class ChartTooltip
     /// <summary>现在是不是开着（离线检查用它验一下悬浮窗真的弹出来了）。</summary>
     public bool IsOpen => _popup.IsOpen;
 
-    public void Show(UIElement element, Charts.Tip tip, Point position)
+    /// <summary><paramref name="anchor"/> 是画布坐标系里"这块数据"的位置。</summary>
+    public void Show(UIElement element, Charts.Tip tip, Point anchor)
     {
         if (ReferenceEquals(_current, element))
-        {
-            Move(position);
             return;
-        }
 
         _current = element;
 
@@ -520,28 +644,10 @@ internal sealed class ChartTooltip
             });
         }
 
+        Place(anchor);
+
         _popup.IsOpen = true;
-        Move(position);
         AnimateIn();
-    }
-
-    public void Move(Point position)
-    {
-        // 靠右边/下边时翻到另一侧，别被画布边缘切掉。
-        const double cardWidth = 210;
-        const double cardHeight = 96;
-
-        var x = position.X + 16;
-        var y = position.Y + 16;
-
-        if (x + cardWidth > _owner.ActualWidth)
-            x = Math.Max(4, position.X - cardWidth - 12);
-
-        if (y + cardHeight > _owner.ActualHeight)
-            y = Math.Max(4, position.Y - cardHeight - 12);
-
-        _popup.HorizontalOffset = x;
-        _popup.VerticalOffset = y;
     }
 
     public void Hide(UIElement element)
@@ -557,6 +663,22 @@ internal sealed class ChartTooltip
     {
         _current = null;
         _popup.IsOpen = false;
+    }
+
+    /// <summary>贴着数据放：默认在锚点右下，靠边时翻到另一侧。</summary>
+    private void Place(Point anchor)
+    {
+        var x = anchor.X + 14;
+        var y = anchor.Y + 10;
+
+        if (x + CardWidth > _owner.ActualWidth)
+            x = Math.Max(4, anchor.X - CardWidth - 14);
+
+        if (y + CardHeight > _owner.ActualHeight)
+            y = Math.Max(4, anchor.Y - CardHeight - 10);
+
+        _popup.HorizontalOffset = x;
+        _popup.VerticalOffset = y;
     }
 
     private void AnimateIn()
