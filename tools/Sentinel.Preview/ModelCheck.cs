@@ -157,6 +157,47 @@ internal static class ModelCheck
         Pump();
 
         var chainList = (ItemsControl)window.FindName("ChainList")!;
+
+        // 拖拽影子的两个前提：拿得到 adorner 层、那一行的快照不是空白
+        var adornerLayer = System.Windows.Documents.AdornerLayer.GetAdornerLayer(chainList);
+        Console.WriteLine($"adorner 层 : {(adornerLayer is null ? "null（影子画不出来）" : "有")}");
+
+        if (chainList.ItemContainerGenerator.ContainerFromIndex(0) is FrameworkElement firstRow)
+        {
+            var w = Math.Max(1, (int)Math.Ceiling(firstRow.ActualWidth));
+            var h = Math.Max(1, (int)Math.Ceiling(firstRow.ActualHeight));
+            var shot = new System.Windows.Media.Imaging.RenderTargetBitmap(
+                w, h, 96, 96, System.Windows.Media.PixelFormats.Pbgra32);
+            shot.Render(firstRow);
+
+            var pixels = new byte[4];
+            shot.CopyPixels(new System.Windows.Int32Rect(w / 2, h / 2, 1, 1), pixels, 4, 0);
+
+            Console.WriteLine($"行快照     : {w}x{h}  中心像素 alpha={pixels[3]}  RGB=({pixels[2]},{pixels[1]},{pixels[0]})");
+
+            // 影子必须画在"被要求的位置"上，而不是停在起点（那就等于没有跟着鼠标走）
+            if (adornerLayer is not null)
+            {
+                var ghost = new DragGhostAdorner(chainList, firstRow);
+                adornerLayer.Add(ghost);
+                ghost.MoveTo(24, 40);
+                adornerLayer.UpdateLayout();
+
+                var layerWidth = Math.Max(1, (int)Math.Ceiling(adornerLayer.ActualWidth));
+                var layerHeight = Math.Max(1, (int)Math.Ceiling(adornerLayer.ActualHeight));
+                var probe = new System.Windows.Media.Imaging.RenderTargetBitmap(
+                    layerWidth, layerHeight, 96, 96, System.Windows.Media.PixelFormats.Pbgra32);
+                probe.Render(adornerLayer);
+
+                var atTarget = new byte[4];
+                probe.CopyPixels(new System.Windows.Int32Rect(28, 44, 1, 1), atTarget, 4, 0);
+
+                Console.WriteLine($"影子像素   : 在 (24,40) 处 alpha={atTarget[3]}（>0 = 画在那里了）");
+                ok &= atTarget[3] > 0;
+
+                adornerLayer.Remove(ghost);
+            }
+        }
         var chainRows = chainList.Items.Count;
         var chainStatus = ((TextBlock)window.FindName("ModelChainStatus")!).Text;
 

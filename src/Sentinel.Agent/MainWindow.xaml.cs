@@ -2149,60 +2149,12 @@ public partial class MainWindow : Window
     }
 
     /// <summary>
-    /// 拖动时跟着鼠标走的那一行。用**静态快照**画，不直接用 VisualBrush：
-    /// 原行在拖动时会被调淡，VisualBrush 会把那个半透明一起画进来。
-    /// </summary>
-    private sealed class DragGhostAdorner : Adorner
-    {
-        private readonly System.Windows.Media.ImageBrush _brush;
-        private readonly System.Windows.Size _size;
-        private double _x;
-        private double _y;
-
-        public DragGhostAdorner(UIElement adornedElement, FrameworkElement source)
-            : base(adornedElement)
-        {
-            IsHitTestVisible = false;
-
-            var width = Math.Max(1, (int)Math.Ceiling(source.ActualWidth));
-            var height = Math.Max(1, (int)Math.Ceiling(source.ActualHeight));
-
-            _size = new System.Windows.Size(width, height);
-
-            var bitmap = new System.Windows.Media.Imaging.RenderTargetBitmap(
-                width, height, 96, 96, System.Windows.Media.PixelFormats.Pbgra32);
-            bitmap.Render(source);
-
-            _brush = new System.Windows.Media.ImageBrush(bitmap)
-            {
-                Stretch = System.Windows.Media.Stretch.Fill,
-            };
-        }
-
-        public void MoveTo(double x, double y)
-        {
-            _x = x;
-            _y = y;
-            InvalidateArrange();
-        }
-
-        protected override void OnRender(System.Windows.Media.DrawingContext drawingContext)
-        {
-            drawingContext.PushOpacity(0.92);
-            drawingContext.DrawRectangle(
-                _brush, null,
-                new System.Windows.Rect(_x, _y, _size.Width, _size.Height));
-            drawingContext.Pop();
-        }
-    }
-
-    /// <summary>
     /// 鼠标现在压在第几行 —— 按**布局位置**算，不看命中测试。
     ///
     /// <para>
-    /// 这一条是抖动那个坑的解法：换位时的滑动是用 RenderTransform 做的，而**命中测试会跟着
-    /// 这个位移走**。动画还没跑完，鼠标底下"命中的"已经是另一行，于是每移一像素就再换一次，
-    /// 两行来回弹。把每一行当前的动画偏移减掉，拿到的是它在布局里的位置，动画再怎么跑都稳定。
+    /// 这是抖动那个坑的解法：换位时的滑动用 RenderTransform 做，而**命中测试会跟着这个位移走**。
+    /// 动画还没跑完，鼠标底下"命中的"已经是另一行，于是每移一像素就再换一次，两行来回弹。
+    /// 把每一行当前的动画偏移减掉，拿到的是它在布局里的位置，动画再怎么跑都稳定。
     /// </para>
     /// </summary>
     private int TargetRowIndexAt(System.Windows.Point position)
