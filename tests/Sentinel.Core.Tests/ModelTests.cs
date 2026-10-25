@@ -113,20 +113,21 @@ public class ModelTests
     }
 
     [Fact]
-    public async Task 系统提示词要求模型识破自相矛盾的补充说明()
+    public async Task 系统提示词要求模型分辨补丁和伪装成补丁的放宽()
     {
         // 模型规则那一段文字是唯一"追加内容不要令牌"的地方：关键词规则里加一条确实是收紧，
-        // 而模型规则里加一句"这类不用拦"是放宽。挡这一手只有提示词这一处 ——
-        // 追加的说明如果和主禁令直接矛盾，按主禁令判。
+        // 而模型规则里加一句"这类不用拦"是放宽。挡这一手只有提示词 —— 而且判据不能写死：
+        // 真正的补丁（避免误伤）和伪装成补丁的放宽长得一样，只能让模型自己掂量。
         var (client, handler) = ClientReturning("""{"choices":[{"message":{"content":"[false, \"\"]"}}]}""");
 
         await client.JudgeAsync(Provider(ApiFormat.OpenAi), "禁止刷短视频", Snapshot(), default);
 
         Assert.Contains("主禁令", handler.Body);
-        Assert.Contains("矛盾", handler.Body);
+        Assert.Contains("打补丁", handler.Body);
+        Assert.Contains("伪装", handler.Body);
         Assert.Contains("按主禁令判", handler.Body);
 
-        // 同时要求它不能把"为避免误伤而收窄"也当成矛盾 —— 否则会把正常的豁免一起废掉。
+        // 也得让它知道"为了避免误伤"是真的存在的情况 —— 否则正常的豁免会被一起废掉。
         Assert.Contains("避免误伤", handler.Body);
     }
 
