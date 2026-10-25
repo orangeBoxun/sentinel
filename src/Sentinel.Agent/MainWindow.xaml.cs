@@ -1990,7 +1990,6 @@ public partial class MainWindow : Window
 
     private ObservableCollection<ChainRow> _chainRows = new();
     private ChainRow? _dragging;
-    private FrameworkElement? _draggingContainer;
     private DragGhostAdorner? _ghost;
     private System.Windows.Point _grabOffset;
     private bool _chainOrderChanged;
@@ -2294,7 +2293,6 @@ public partial class MainWindow : Window
             return;
 
         _dragging = row;
-        _draggingContainer = container;
         _grabOffset = e.GetPosition(container);
 
         // 跟着鼠标走的"影子"：拿这一刻的静态快照，所以下面把原行调淡不会把影子也弄淡。
@@ -2306,11 +2304,34 @@ public partial class MainWindow : Window
                           e.GetPosition(ChainList).Y - _grabOffset.Y);
         }
 
-        container.Opacity = 0.35;
+        // 原行**完全隐去**、只留它占的那一格：拖动期间"这一项"由跟着光标的影子代表。
+        // 原来调成 0.35 会变成"光标上有个影子、原地还留着一个残影"，还会盖住让位上来的行。
+        ApplyDraggedLook();
 
         // 捕获在**列表**上，不是手柄上：这样拖出列表边界也能收到移动/松开事件。
         ChainList.CaptureMouse();
         e.Handled = true;
+    }
+
+    /// <summary>
+    /// 拖动期间：被拖的那一行隐去（它由影子代表），其余正常。
+    ///
+    /// <para>
+    /// 每次换位都要重刷一遍，而且按 <c>DataContext</c> 现找容器 —— 列表重排之后容器有可能被
+    /// 重建，抱着拖动开始时的那个引用会漏掉新的那一行，残影就又冒出来了。
+    /// </para>
+    /// </summary>
+    private void ApplyDraggedLook()
+    {
+        for (var i = 0; i < _chainRows.Count; i++)
+        {
+            if (ChainList.ItemContainerGenerator.ContainerFromIndex(i) is not FrameworkElement container)
+                continue;
+
+            container.Opacity = _dragging is not null && ReferenceEquals(container.DataContext, _dragging)
+                ? 0
+                : 1;
+        }
     }
 
     private FrameworkElement? FindRowContainer(ChainRow row)
@@ -2354,6 +2375,7 @@ public partial class MainWindow : Window
         for (var n = 0; n < _chainRows.Count; n++)
             _chainRows[n].SetPosition(n);
 
+        ApplyDraggedLook();
         SlideIntoPlace(before);
     }
 
@@ -2374,11 +2396,7 @@ public partial class MainWindow : Window
             ghost.BeginAnimation(UIElement.OpacityProperty, fade);
         }
 
-        if (_draggingContainer is { } container)
-        {
-            container.Opacity = 1;
-            _draggingContainer = null;
-        }
+        ApplyDraggedLook();
 
         if (ChainList.IsMouseCaptured)
             ChainList.ReleaseMouseCapture();
