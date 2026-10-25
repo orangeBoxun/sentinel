@@ -358,7 +358,9 @@ public sealed class DebateWindow : Window
                 _reason.Text.Trim(),
                 line => Dispatcher.Invoke(() => Append(line)),
                 _cts.Token,
-                rounds => Task.FromResult(AskCheckpoint(rounds)));
+                // 必须切回 UI 线程再建窗口：Core 里 await 之后用的是 ConfigureAwait(false)，
+                // 续体落在线程池的 MTA 线程上 —— 在那里 new Window 会直接抛"调用线程必须为 STA"。
+                rounds => Dispatcher.InvokeAsync(() => AskCheckpoint(rounds)).Task);
 
             if (outcome is not null && outcome.Patch.Count > 0)
             {
