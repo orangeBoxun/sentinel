@@ -859,6 +859,36 @@ public class ModelTests
         Assert.Equal(ModelTroubleKind.None, supervisor.BlockingKind);
     }
 
+    [Fact]
+    public async Task 自检走的是整条链_不是只问第一个()
+    {
+        var config = ChainConfig(("cheap", false), ("expensive", true));
+        var handler = new PerModelHandler(new() { ["cheap"] = false, ["expensive"] = true });
+        var supervisor = ChainSupervisor(config, handler);
+
+        var asked = await supervisor.DiagnoseAsync("禁令", Snapshot(), CancellationToken.None);
+
+        // 两个都问了，而且顺序就是链的顺序 —— 自检必须和监控问同一串问题。
+        Assert.Equal(2, asked.Count);
+        Assert.Equal("cheap", asked[0].Provider.Id);
+        Assert.False(asked[0].Result.Violates);
+        Assert.Equal("expensive", asked[1].Provider.Id);
+        Assert.True(asked[1].Result.Violates);
+    }
+
+    [Fact]
+    public async Task 自检也遵守有人判违规就不问后面()
+    {
+        var config = ChainConfig(("cheap", true), ("expensive", false));
+        var handler = new PerModelHandler(new() { ["cheap"] = true, ["expensive"] = false });
+        var supervisor = ChainSupervisor(config, handler);
+
+        var asked = await supervisor.DiagnoseAsync("禁令", Snapshot(), CancellationToken.None);
+
+        Assert.Single(asked);
+        Assert.Equal("cheap", asked[0].Provider.Id);
+    }
+
     private static async Task WaitUntil(Func<bool> condition)
     {
         for (var i = 0; i < 60 && !condition(); i++)

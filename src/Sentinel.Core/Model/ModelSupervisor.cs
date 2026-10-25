@@ -603,6 +603,42 @@ public sealed class ModelSupervisor : IModelSupervisor
         string.Join(">", Chain().Select(p => $"{p.Id}:{p.Model}:{p.Endpoint}"));
 
     /// <summary>
+    /// 诊断用：**按判断链逐个真问一次**，和监控走同一条路（含"任一说违规就停"）。
+    ///
+    /// <para>
+    /// 自检必须问监控会问的那条链 —— 只问第一个模型的话，链上第二个（往往才是判得准的那个）
+    /// 永远看不到，人就会以为"我明明配了两个，怎么只问了一个"。
+    /// </para>
+    /// </summary>
+    public async Task<IReadOnlyList<(ModelProvider Provider, ModelCallResult Result)>> DiagnoseAsync(
+        string instruction, ContentSnapshot snapshot, CancellationToken token)
+    {
+        var asked = new List<(ModelProvider, ModelCallResult)>();
+
+        foreach (var provider in Chain())
+        {
+            ModelCallResult result;
+
+            try
+            {
+                result = await _client.JudgeAsync(provider, instruction, snapshot, token).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                result = new ModelCallResult(ModelCallOutcome.NoAnswer, Message: $"抛异常：{ex.Message}");
+            }
+
+            asked.Add((provider, result));
+
+            // 和监控一样：有人说了违规就地停，后面的不再花钱。
+            if (result.Outcome == ModelCallOutcome.Answered && result.Violates)
+                break;
+        }
+
+        return asked;
+    }
+
+    /// <summary>
     /// 跑一遍链的结果。失败分两种：**稳定供应商**失败（要吵）和其他失败（跳过就好）。
     /// </summary>
     private sealed record ChainRun(

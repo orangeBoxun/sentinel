@@ -3506,41 +3506,57 @@ public partial class MainWindow : Window
             report.Add($"   ✗ 策略「{policy.Name}」的动作列表是空的。");
         }
 
-        // ---- 4. 问模型
-        var provider = _state.Config.Models.FirstOrDefault(m => m.Id == _state.Config.ActiveModelId);
+        // ---- 4. 问模型（走**判断链**，和监控同一条路径）
+        //
+        // 优先用监控手上那个监督器；它没建起来（监控没跑）就临时造一个 ——
+        // "监控没在跑"恰恰是最需要自检的时候，不能因此把这一步跳过。
+        var chainTester = _state.Monitor.ModelSupervisor ?? new ModelSupervisor(() => _state.Config);
 
-        if (provider is null)
+        report.Add("4. 问模型（按判断链依次问，这一步会真的发请求）："
+                   + (_state.Monitor.ModelSupervisor is null ? "（监控没在跑，这里用一个临时监督器问）" : ""));
+
+        var watch = Stopwatch.StartNew();
+        var asked = await chainTester.DiagnoseAsync(instruction, snapshot, CancellationToken.None);
+        watch.Stop();
+
+        if (asked.Count == 0)
         {
-            steps.Add("没有启用中的服务商 —— 模型监督等于关着");
-            report.Add("4. 没有启用任何服务商。去「大语言模型」页启用一个。");
+            steps.Add("判断链是空的 —— 模型监督现在什么都不判");
+            report.Add("   判断链是空的。去「大语言模型」→「判断链」把要用的供应商加进来。");
             return Summarize(steps, report);
         }
 
-        report.Add($"4. 问模型（这一步会真的发一次请求）：{provider.Name} / {provider.Model} · {provider.Format}");
-
-        var watch = Stopwatch.StartNew();
-        var result = await new ModelClient().JudgeAsync(provider, instruction, snapshot, CancellationToken.None);
-        watch.Stop();
-
-        report.Add($"   结果：{DescribeOutcome(result)}    用时 {watch.Elapsed.TotalSeconds:0.0} 秒");
-
-        if (result.Message is { Length: > 0 })
-            report.Add($"   说明：{result.Message}");
-
-        if (result.Outcome == ModelCallOutcome.Answered)
+        foreach (var (model, answer) in asked)
         {
-            report.Add($"   判定：{(result.Violates ? "**违规**" : "不违规")}"
-                       + (result.Reason is null ? "" : $"    原因「{result.Reason}」"));
+            var line = $"   {model.Name} / {model.Model} → {DescribeOutcome(answer)}";
 
-            if (!result.Violates)
+            if (answer.Outcome == ModelCallOutcome.Answered)
             {
-                steps.Add("模型判的是「不违规」—— 该改的是那句禁令，写具体一点");
+                line += answer.Violates
+                    ? "    判「违规」" + (answer.Reason is null ? "" : $"（{answer.Reason}）")
+                    : "    判「不违规」";
             }
+            else if (answer.Message is { Length: > 0 })
+            {
+                line += $"：{answer.Message}";
+            }
+
+            report.Add(line);
         }
-        else
-        {
-            steps.Add($"模型这次没给判定（{DescribeOutcome(result)}）");
-        }
+
+        if (asked.Count > 1 && asked[^1].Result.Violates)
+            report.Add("   （有人在链中间就判了违规，后面的模型没有再问）");
+
+        report.Add($"   总用时 {watch.Elapsed.TotalSeconds:0.0} 秒");
+
+        var chainAnswer = asked
+            .Select(a => a.Result)
+            .LastOrDefault(r => r.Outcome == ModelCallOutcome.Answered);
+
+        if (chainAnswer is null)
+            steps.Add("链上一个模型都没给出判定");
+        else if (!chainAnswer.Violates)
+            steps.Add("链上所有模型都判「不违规」—— 该改的是那句禁令，写具体一点");
 
         // ---- 5. 监控那边现在记着什么
         if (!_state.Monitor.IsRunning)
@@ -3560,9 +3576,9 @@ public partial class MainWindow : Window
                        + (held.Age is { } age ? $"，那是 {age.TotalSeconds:0} 秒前的事" : "")
                        + "）");
 
-            if (result.Outcome == ModelCallOutcome.Answered
+            if (chainAnswer is not null
                 && held.Verdict.Kind != ModelVerdictKind.Unknown
-                && result.Violates != held.Verdict.IsBlocked)
+                && chainAnswer.Violates != held.Verdict.IsBlocked)
             {
                 report.Add("   ⚠ 这一次问的结论，和监控手上那条不一样。两件事凑在一起：监控是"
                            + "**异步**判的（上一轮问的，这一轮才用上），而且**同一个地址 60 秒内"
