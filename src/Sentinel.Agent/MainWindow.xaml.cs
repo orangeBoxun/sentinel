@@ -3687,6 +3687,39 @@ public partial class MainWindow : Window
 
     // ---- 模型监督自检
 
+    /// <summary>「模型讨论…」：拿当前这一页，让两个模型互相挑错。</summary>
+    private void OpenDebate_Click(object sender, RoutedEventArgs e)
+    {
+        if (DiagModelTargetPicker.SelectedItem is not Target target)
+        {
+            DiagModelBox.Text = "先在左边选一个目标（去「目标」页建一个）。";
+            return;
+        }
+
+        if (_state.Config.Models.Count == 0)
+        {
+            DiagModelBox.Text = "还没有服务商 —— 去「大语言模型」页加两个，讨论才有对象。";
+            return;
+        }
+
+        if (_windows.Count == 0)
+            RefreshWindows();
+
+        var matches = _windows.Select(w => w.Value)
+            .Where(w => TargetMatcher.Matches(target, w))
+            .ToList();
+
+        var window = matches.FirstOrDefault(w => w.IsExposed && !w.IsMinimized) ?? matches.FirstOrDefault();
+
+        if (window is null)
+        {
+            DiagModelBox.Text = "这个目标现在没有匹配的窗口 —— 先把那个应用打开。";
+            return;
+        }
+
+        new DebateWindow(_state, target, window) { Owner = this }.ShowDialog();
+    }
+
     private void RefreshDiagTargets()
     {
         var picked = DiagModelTargetPicker.SelectedItem as Target;
@@ -3696,6 +3729,15 @@ public partial class MainWindow : Window
             picked is not null && _state.Config.Targets.Contains(picked)
                 ? picked
                 : _state.Config.Targets.FirstOrDefault();
+
+        // 问哪个服务商：整条判断链，或者单独一个（想单独验某个模型时用）。
+        var chosen = (DiagProviderPicker.SelectedItem as Choice<string?>)?.Value;
+
+        var options = new List<Choice<string?>> { new(null, "整条判断链") };
+        options.AddRange(_state.Config.Models.Select(m => new Choice<string?>(m.Id, m.Name)));
+
+        DiagProviderPicker.ItemsSource = options;
+        DiagProviderPicker.SelectedItem = options.FirstOrDefault(o => o.Value == chosen) ?? options[0];
     }
 
     private async void RunModelDiagnose_Click(object sender, RoutedEventArgs e)
@@ -3715,7 +3757,8 @@ public partial class MainWindow : Window
             if (_windows.Count == 0)
                 RefreshWindows();
 
-            DiagModelBox.Text = await DiagnoseModelAsync(target);
+            var providerId = (DiagProviderPicker.SelectedItem as Choice<string?>)?.Value;
+            DiagModelBox.Text = await DiagnoseModelAsync(target, providerId);
         }
         catch (Exception ex)
         {
@@ -3741,7 +3784,7 @@ public partial class MainWindow : Window
     /// 缓存里那份在第 5 步单独列出来，两者对不上本身就说明问题。
     /// </para>
     /// </summary>
-    private async Task<string> DiagnoseModelAsync(Target target)
+    private async Task<string> DiagnoseModelAsync(Target target, string? onlyProviderId = null)
     {
         var steps = new List<string>();
         var report = new List<string>();
@@ -3866,17 +3909,25 @@ public partial class MainWindow : Window
         // "监控没在跑"恰恰是最需要自检的时候，不能因此把这一步跳过。
         var chainTester = _state.Monitor.ModelSupervisor ?? new ModelSupervisor(() => _state.Config);
 
-        report.Add("4. 问模型（按判断链依次问，这一步会真的发请求）："
-                   + (_state.Monitor.ModelSupervisor is null ? "（监控没在跑，这里用一个临时监督器问）" : ""));
+        var only = onlyProviderId is null
+            ? null
+            : _state.Config.Models.FirstOrDefault(m => m.Id == onlyProviderId);
+
+        report.Add(only is null
+            ? "4. 问模型（按判断链依次问，这一步会真的发请求）："
+              + (_state.Monitor.ModelSupervisor is null ? "（监控没在跑，这里用一个临时监督器问）" : "")
+            : $"4. 只问「{only.Name}」（这一步会真的发请求）：");
 
         var watch = Stopwatch.StartNew();
-        var asked = await chainTester.DiagnoseAsync(instruction, snapshot, CancellationToken.None);
+        var asked = await chainTester.DiagnoseAsync(instruction, snapshot, onlyProviderId, CancellationToken.None);
         watch.Stop();
 
         if (asked.Count == 0)
         {
-            steps.Add("判断链是空的 —— 模型监督现在什么都不判");
-            report.Add("   判断链是空的。去「大语言模型」→「判断链」把要用的供应商加进来。");
+            steps.Add(only is null ? "判断链是空的 —— 模型监督现在什么都不判" : "选中的服务商没读到");
+            report.Add(only is null
+                ? "   判断链是空的。去「大语言模型」→「判断链」把要用的供应商加进来。"
+                : "   配置里没有这个服务商了（可能刚被删掉），刷新一下这一页。");
             return Summarize(steps, report);
         }
 

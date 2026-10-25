@@ -1205,12 +1205,18 @@
 
                                 <WrapPanel Margin="0,14,0,0">
                                     <TextBlock Text="目标：" VerticalAlignment="Center" Foreground="{StaticResource TextSecondary}" />
-                                    <ComboBox x:Name="DiagModelTargetPicker" Width="260" Margin="8,0,12,0" DisplayMemberPath="DisplayName" />
-                                <Button x:Name="DiagModelButton" Style="{StaticResource PrimaryIconButton}" Tag="{StaticResource IconPlay}"
-                                        Content="测一次模型监督" Click="RunModelDiagnose_Click" />
-                                <Button Style="{StaticResource ToolIconButton}" Tag="{StaticResource IconRefresh}" Content="刷新窗口"
-                                        Margin="8,0,0,0" Click="RefreshDiagWindows_Click" />
-                            </WrapPanel>
+                                    <ComboBox x:Name="DiagModelTargetPicker" Width="240" Margin="8,0,12,0" DisplayMemberPath="DisplayName" />
+
+                                    <TextBlock Text="问：" VerticalAlignment="Center" Foreground="{StaticResource TextSecondary}" />
+                                    <ComboBox x:Name="DiagProviderPicker" Width="170" Margin="8,0,12,0" DisplayMemberPath="Display" />
+
+                                    <Button x:Name="DiagModelButton" Style="{StaticResource PrimaryIconButton}" Tag="{StaticResource IconPlay}"
+                                            Content="测一次模型监督" Click="RunModelDiagnose_Click" />
+                                    <Button Style="{StaticResource ToolIconButton}" Tag="{StaticResource IconRefresh}" Content="刷新窗口"
+                                            Margin="8,0,0,0" Click="RefreshDiagWindows_Click" />
+                                    <Button Style="{StaticResource ToolIconButton}" Tag="{StaticResource IconCheck}"
+                                            Content="模型讨论…" Margin="8,0,0,0" Click="OpenDebate_Click" />
+                                </WrapPanel>
 
                             <TextBox x:Name="DiagModelBox" IsReadOnly="True" AcceptsReturn="True" TextWrapping="Wrap"
                                      Style="{StaticResource MonoTextBox}" Margin="0,14,0,0" Height="Auto"

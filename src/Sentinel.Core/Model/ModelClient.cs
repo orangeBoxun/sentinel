@@ -224,6 +224,64 @@ public sealed class ModelClient
         }
     }
 
+    /// <summary>
+    /// 发一段自由文本对话，拿回模型的回答 —— 给「模型讨论」用（那里不需要 JSON 判定格式）。
+    ///
+    /// <para>
+    /// 和 <see cref="JudgeAsync"/> 共用同一条传输（重试、超时、错误分类），只是不解析判定。
+    /// </para>
+    /// </summary>
+    public async Task<(string? Text, ModelCallResult Info)> AskAsync(
+        ModelProvider provider, string system, string user, CancellationToken token)
+    {
+        if (string.IsNullOrWhiteSpace(provider.Endpoint) || string.IsNullOrWhiteSpace(provider.Model))
+            return (null, new ModelCallResult(ModelCallOutcome.NeedsAttention, Message: "这个服务商还没填地址和模型。"));
+
+        if (!Uri.TryCreate(provider.Endpoint.Trim(), UriKind.Absolute, out var parsed)
+            || (parsed.Scheme != Uri.UriSchemeHttp && parsed.Scheme != Uri.UriSchemeHttps))
+        {
+            return (null, new ModelCallResult(ModelCallOutcome.NeedsAttention,
+                Message: $"请求地址不是一个完整的 http/https URL：{provider.Endpoint}"));
+        }
+
+        HttpResponseMessage response;
+
+        try
+        {
+            response = await SendWithRetryAsync(() => BuildRequest(provider, system, user), token)
+                .ConfigureAwait(false);
+        }
+        catch (OperationCanceledException) when (token.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            return (null, LooksLikeTimeout(ex)
+                ? new ModelCallResult(ModelCallOutcome.Timeout,
+                    Message: $"等了 {_http.Timeout.TotalSeconds:0} 秒也没答上来。")
+                : new ModelCallResult(ModelCallOutcome.Unreachable, Message: Describe(ex)));
+        }
+
+        using (response)
+        {
+            var body = await response.Content.ReadAsStringAsync(token).ConfigureAwait(false);
+
+            if (!response.IsSuccessStatusCode)
+                return (null, ClassifyFailure(provider, response.StatusCode, body));
+
+            var text = ExtractAnswerText(provider.Format, body);
+            var (prompt, completion, cached) = ReadUsage(body);
+
+            return string.IsNullOrWhiteSpace(text)
+                ? (null, new ModelCallResult(ModelCallOutcome.NoAnswer,
+                    Message: $"回了 200，但没有能读的文字。{Shorten(body)}",
+                    PromptTokens: prompt, CompletionTokens: completion, CachedTokens: cached))
+                : (text.Trim(), new ModelCallResult(ModelCallOutcome.Answered,
+                    PromptTokens: prompt, CompletionTokens: completion, CachedTokens: cached));
+        }
+    }
+
     // ------------------------------------------------------------------ 传输
 
     /// <summary>
@@ -628,15 +686,16 @@ public sealed class ModelClient
 
     // ------------------------------------------------------------------ 各家形状
 
-    private static HttpRequestMessage Build(ModelProvider provider, string instruction, ContentSnapshot snapshot)
-    {
-        var user = BuildQuestion(instruction, snapshot);
+    private static HttpRequestMessage Build(ModelProvider provider, string instruction, ContentSnapshot snapshot) =>
+        BuildRequest(provider, SystemPrompt, BuildQuestion(instruction, snapshot));
 
+    private static HttpRequestMessage BuildRequest(ModelProvider provider, string system, string user)
+    {
         var json = provider.Format switch
         {
-            ApiFormat.OpenAi => BuildOpenAi(provider, SystemPrompt, user),
-            ApiFormat.Responses => BuildResponses(provider, SystemPrompt, user),
-            ApiFormat.Anthropic => BuildAnthropic(provider, SystemPrompt, user),
+            ApiFormat.OpenAi => BuildOpenAi(provider, system, user),
+            ApiFormat.Responses => BuildResponses(provider, system, user),
+            ApiFormat.Anthropic => BuildAnthropic(provider, system, user),
             _ => throw new NotSupportedException($"不认识的格式：{provider.Format}"),
         };
 

@@ -621,12 +621,24 @@ public sealed class ModelSupervisor : IModelSupervisor
     /// 永远看不到，人就会以为"我明明配了两个，怎么只问了一个"。
     /// </para>
     /// </summary>
+    public Task<IReadOnlyList<(ModelProvider Provider, ModelCallResult Result)>> DiagnoseAsync(
+        string instruction, ContentSnapshot snapshot, CancellationToken token) =>
+        DiagnoseAsync(instruction, snapshot, onlyProviderId: null, token);
+
+    /// <param name="onlyProviderId">
+    /// 只问这一个服务商（自检里选"单独测某个供应商"）。null = 按整条判断链问。
+    /// 它**不必在链里** —— 想看看某个还没入链的模型会怎么判，正是这个参数的用途。
+    /// </param>
     public async Task<IReadOnlyList<(ModelProvider Provider, ModelCallResult Result)>> DiagnoseAsync(
-        string instruction, ContentSnapshot snapshot, CancellationToken token)
+        string instruction, ContentSnapshot snapshot, string? onlyProviderId, CancellationToken token)
     {
         var asked = new List<(ModelProvider, ModelCallResult)>();
 
-        foreach (var provider in Chain())
+        var providers = onlyProviderId is null
+            ? Chain()
+            : _config().Models.Where(m => m.Id == onlyProviderId).ToList();
+
+        foreach (var provider in providers)
         {
             ModelCallResult result;
 
