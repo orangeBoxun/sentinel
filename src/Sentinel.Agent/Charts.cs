@@ -134,7 +134,10 @@ internal static class Charts
             Canvas.SetTop(hit, top);
             canvas.Children.Add(hit);
 
-            Wire(canvas, hit, () => tip(i));
+            // **必须拷贝到局部变量**：for 的循环变量是所有 lambda 共用的，循环结束后
+            // 它停在 labels.Count —— 鼠标一移上去就是越界下标，直接崩进程。
+            var column = i;
+            Wire(canvas, hit, () => tip(column));
         }
     }
 
@@ -203,7 +206,8 @@ internal static class Charts
             Canvas.SetTop(hit, rowHeight * i);
             canvas.Children.Add(hit);
 
-            Wire(canvas, hit, () => tip(i));
+            var row = i;   // 同上：循环变量不能直接进闭包
+            Wire(canvas, hit, () => tip(row));
         }
     }
 
@@ -304,8 +308,16 @@ internal static class Charts
 
         element.MouseEnter += (_, _) =>
         {
-            if (content() is { } tip)
-                hover.Show(element, tip, Mouse.GetPosition(canvas));
+            try
+            {
+                if (content() is { } tip)
+                    hover.Show(element, tip, Mouse.GetPosition(canvas));
+            }
+            catch
+            {
+                // 一次悬浮窗出错不该让整个程序死 —— 这张图只是没有提示。
+                hover.Close();
+            }
         };
 
         element.MouseMove += (_, _) => hover.Move(Mouse.GetPosition(canvas));

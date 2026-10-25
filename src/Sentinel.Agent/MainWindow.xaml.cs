@@ -2060,7 +2060,15 @@ public partial class MainWindow : Window
             RenderUsage();
     }
 
-    /// <summary>离线检查用：把折线图的悬浮窗打开一次，返回它是不是真的开了。</summary>
+    /// <summary>
+    /// 离线检查用：对折线图最后一个"命中区"**真的触发一次 MouseEnter**，返回悬浮窗开没开。
+    ///
+    /// <para>
+    /// 特意走真实事件、而不是直接调 Show：悬浮窗的内容是由闭包生成的，而闭包最容易出的错是
+    /// 抓住 for 循环变量（所有 lambda 共用一个，循环结束就停在越界值）—— 那样鼠标一移上去
+    /// 就崩进程。直接调 Show 永远测不出这一类。
+    /// </para>
+    /// </summary>
     public bool ShowUsageTipForCheck()
     {
         if (UsageLineChart.Tag is not ChartTooltip tooltip
@@ -2069,11 +2077,17 @@ public partial class MainWindow : Window
             return false;
         }
 
-        tooltip.Show(target, new Charts.Tip("检查", new[] { "悬浮窗内容", "第二行" }),
-                     new System.Windows.Point(40, 40));
+        target.RaiseEvent(new MouseEventArgs(Mouse.PrimaryDevice, Environment.TickCount)
+        {
+            RoutedEvent = UIElement.MouseEnterEvent,
+        });
 
         var open = tooltip.IsOpen;
-        tooltip.Close();
+
+        target.RaiseEvent(new MouseEventArgs(Mouse.PrimaryDevice, Environment.TickCount)
+        {
+            RoutedEvent = UIElement.MouseLeaveEvent,
+        });
 
         return open;
     }
