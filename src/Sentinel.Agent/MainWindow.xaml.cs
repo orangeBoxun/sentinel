@@ -2197,6 +2197,78 @@ public partial class MainWindow : Window
         }
     }
 
+    /// <summary>
+    /// 鼠标现在压在第几行 —— 按**布局位置**算，不看命中测试。
+    ///
+    /// <para>
+    /// 这一条是抖动那个坑的解法：换位时的滑动是用 RenderTransform 做的，而**命中测试会跟着
+    /// 这个位移走**。动画还没跑完，鼠标底下"命中的"已经是另一行，于是每移一像素就再换一次，
+    /// 两行来回弹。把每一行当前的动画偏移减掉，拿到的是它在布局里的位置，动画再怎么跑都稳定。
+    /// </para>
+    /// </summary>
+    private int TargetRowIndexAt(System.Windows.Point position)
+    {
+        for (var i = 0; i < _chainRows.Count; i++)
+        {
+            if (ChainList.ItemContainerGenerator.ContainerFromIndex(i) is not FrameworkElement container)
+                continue;
+
+            var animatedOffset = (container.RenderTransform as System.Windows.Media.TranslateTransform)?.Y ?? 0;
+            var top = container.TranslatePoint(new System.Windows.Point(0, 0), ChainList).Y - animatedOffset;
+
+            if (position.Y >= top && position.Y < top + container.ActualHeight)
+                return i;
+        }
+
+        return -1;
+    }
+
+    /// <summary>每一行现在在列表里的纵坐标（换位之前拍一张）。</summary>
+    private Dictionary<FrameworkElement, double> CaptureRowPositions()
+    {
+        var positions = new Dictionary<FrameworkElement, double>();
+
+        for (var i = 0; i < _chainRows.Count; i++)
+        {
+            if (ChainList.ItemContainerGenerator.ContainerFromIndex(i) is FrameworkElement container)
+                positions[container] = container.TranslatePoint(new System.Windows.Point(0, 0), ChainList).Y;
+        }
+
+        return positions;
+    }
+
+    /// <summary>换位之后让每一行从原位置滑到新位置（180ms、缓出）。</summary>
+    private void SlideIntoPlace(Dictionary<FrameworkElement, double> before)
+    {
+        ChainList.UpdateLayout();
+
+        foreach (var (container, oldY) in before)
+        {
+            if (!container.IsVisible)
+                continue;
+
+            var newY = container.TranslatePoint(new System.Windows.Point(0, 0), ChainList).Y;
+            var delta = oldY - newY;
+
+            if (Math.Abs(delta) < 0.5)
+                continue;
+
+            var transform = new System.Windows.Media.TranslateTransform(0, delta);
+            container.RenderTransform = transform;
+
+            transform.BeginAnimation(
+                System.Windows.Media.TranslateTransform.YProperty,
+                new System.Windows.Media.Animation.DoubleAnimation(
+                    0, TimeSpan.FromMilliseconds(180))
+                {
+                    EasingFunction = new System.Windows.Media.Animation.CubicEase
+                    {
+                        EasingMode = System.Windows.Media.Animation.EasingMode.EaseOut,
+                    },
+                });
+        }
+    }
+
     /// <summary>把第 from 行挪到第 to 行并保存。拖拽走的是同一段落盘逻辑。</summary>
     public void ReorderChain(int from, int to)
     {
@@ -2264,21 +2336,17 @@ public partial class MainWindow : Window
 
         _ghost?.MoveTo(position.X - _grabOffset.X, position.Y - _grabOffset.Y);
 
-        // 不能用 IsMouseOver：鼠标被捕获之后，除了捕获者以外都不再报告"悬停"，
-        // 于是永远找不到目标行（第一版就是这么拖不动的）。按坐标命中测试才可靠。
-        var hit = ChainList.InputHitTest(position) as DependencyObject;
+        var to = TargetRowIndexAt(position);
 
-        while (hit is not null and not ContentPresenter)
-            hit = System.Windows.Media.VisualTreeHelper.GetParent(hit);
-
-        if (hit is not ContentPresenter { DataContext: ChainRow target })
+        if (to < 0)
             return;
 
-        var from = _chainRows.IndexOf(_dragging);
-        var to = _chainRows.IndexOf(target);
+        var from = _chainRows.IndexOf(_dragging!);
 
-        if (from < 0 || to < 0 || from == to)
+        if (from < 0 || from == to)
             return;
+
+        var before = CaptureRowPositions();
 
         _chainRows.Move(from, to);
         _chainOrderChanged = true;
@@ -2286,10 +2354,7 @@ public partial class MainWindow : Window
         for (var n = 0; n < _chainRows.Count; n++)
             _chainRows[n].SetPosition(n);
 
-        // 这里**不能**加"滑到新位置"的动画：RenderTransform 的位移会参与命中测试，
-        // 动画还在跑的时候鼠标底下已经是另一行了 —— 于是每移动一像素就再换一次，
-        // 两行来回交换，看起来就是鬼畜抖动。拖动时的反馈交给跟着光标的影子，
-        // 松手时影子淡出。
+        SlideIntoPlace(before);
     }
 
     private void ChainDragEnd(object sender, MouseEventArgs e)
