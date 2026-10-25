@@ -3889,6 +3889,10 @@ public partial class MainWindow : Window
                 line += answer.Violates
                     ? "    判「违规」" + (answer.Reason is null ? "" : $"（{answer.Reason}）")
                     : "    判「不违规」";
+
+                line += answer.StrictViolates is { } strict
+                    ? strict == answer.Violates ? "    · 从严一致，定论" : "    · 从严不一致，继续往下问"
+                    : "    · 没给从严值，继续往下问";
             }
             else if (answer.Message is { Length: > 0 })
             {
@@ -3897,9 +3901,6 @@ public partial class MainWindow : Window
 
             report.Add(line);
         }
-
-        if (asked.Count > 1 && asked[^1].Result.Violates)
-            report.Add("   （有人在链中间就判了违规，后面的模型没有再问）");
 
         report.Add($"   总用时 {watch.Elapsed.TotalSeconds:0.0} 秒");
 

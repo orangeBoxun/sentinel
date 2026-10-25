@@ -64,7 +64,8 @@ public sealed record ModelCallResult(
     string? Message = null,
     int? PromptTokens = null,
     int? CompletionTokens = null,
-    int? CachedTokens = null);
+    int? CachedTokens = null,
+    bool? StrictViolates = null);
 
 /// <summary>取模型列表的结果。<paramref name="Message"/> 无论成败都要能看懂 —— 取不到的时候，
 /// 用户第一件要知道的事是"你试的是哪个地址"。</summary>
@@ -711,11 +712,16 @@ public sealed class ModelClient
     // ------------------------------------------------------------------ 提示词
 
     /// <summary>
-    /// 要模型只回一个二元组。
+    /// 要模型回一个三元组：正常判断、原因、以及**从严判断**。
     ///
     /// <para>
     /// 特意用 JSON 而不是"回 是/否"：自然语言的回答后面总会跟一句解释，而"是"和"否"混在
     /// 一整段话里，靠字符串匹配去认是会认错的 —— 一旦认反，结果就是**该拦的放过去**。
+    /// </para>
+    /// <para>
+    /// 第三个"从严"值是给**判断链**用的：正常判断和从严判断一致，说明这个模型有把握，
+    /// 链就停在这里（不花钱再问下一个）；两者打架说明它拿不准，才往下走。没有这个值，
+    /// 链只能"不违规就往下问"，于是**越守规矩越费钱** —— 每个正常页面都要问完整条链。
     /// </para>
     /// <para>
     /// <b>还要教它分辨"补丁"和"伪装成补丁的放宽"。</b>别的规则改成什么样都要令牌，唯独
@@ -740,9 +746,11 @@ public sealed class ModelClient
         "拿不准的时候，按主禁令判。\n" +
         "\n" +
         "只输出一个 JSON 数组，不要任何其他文字、不要代码块：\n" +
-        "[是否违规, \"原因\"]\n" +
+        "[是否违规, \"原因\", 从严是否违规]\n" +
         "第一个元素是 true 或 false；第二个元素是一句凝练的中文原因，不超过 25 个字。\n" +
-        "判断不了或者内容不足以判断时，一律返回 false。";
+        "第三个元素是**从严**的判断：只要还剩一点嫌疑、或者你自己拿不准，就填 true\n" +
+        "（宁可杀错也不放过）；确定没问题才填 false。\n" +
+        "判断不了、或者内容不足以判断时：第一个元素填 false，第三个元素填 true。";
 
     private static string BuildQuestion(string instruction, ContentSnapshot snapshot)
     {
@@ -919,12 +927,16 @@ public sealed class ModelClient
                 ? spoken
                 : null;
 
+            // 第三个元素是"从严判断"：没给就是 null（调用方当作"拿不准"处理）。
+            var strict = array.Count > 2 ? ReadFlag(array[2]) : null;
+
             if (!violates)
-                return new ModelCallResult(ModelCallOutcome.Answered);
+                return new ModelCallResult(ModelCallOutcome.Answered, StrictViolates: strict);
 
             // 说违规但没给原因：照样拦，只是没法告诉他为什么。
             return new ModelCallResult(ModelCallOutcome.Answered, Violates: true,
-                Reason: string.IsNullOrWhiteSpace(reason) ? "模型判定违规" : reason.Trim());
+                Reason: string.IsNullOrWhiteSpace(reason) ? "模型判定违规" : reason.Trim(),
+                StrictViolates: strict);
         }
         catch (Exception ex) when (ex is JsonException or InvalidOperationException or FormatException)
         {

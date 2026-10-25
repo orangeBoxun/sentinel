@@ -644,9 +644,13 @@ public sealed class ModelSupervisor : IModelSupervisor
 
             asked.Add((provider, result));
 
-            // 和监控一样：有人说了违规就地停，后面的不再花钱。
-            if (result.Outcome == ModelCallOutcome.Answered && result.Violates)
+            // 和监控一样：正常判断与从严判断一致就算定论，后面的不再花钱。
+            if (result.Outcome == ModelCallOutcome.Answered
+                && result.StrictViolates is { } strict
+                && strict == result.Violates)
+            {
                 break;
+            }
         }
 
         return asked;
@@ -710,8 +714,11 @@ public sealed class ModelSupervisor : IModelSupervisor
                 answer = result;
                 answeredBy = provider;
 
-                if (result.Violates)
-                    break;   // 有人说了违规 —— 后面的模型不用再花钱
+                // **正常判断和"从严"判断一致 = 这个模型有把握，链停在这里**，后面的不再花钱。
+                // 两者打架说明它拿不准，才往下走；模型没给从严值（没照格式回）同样当"拿不准"——
+                // 宁可多问一次，也别把"它其实没把握"读成"它很确定"。
+                if (result.StrictViolates is { } strict && strict == result.Violates)
+                    break;
             }
             else
             {
@@ -729,6 +736,11 @@ public sealed class ModelSupervisor : IModelSupervisor
             }
         }
 
+        // 全都拿不准：用**最后一个**的正常判断（那是当下最好的一次回答），
+        // 从严值只负责"要不要继续问"，不负责"最后拦不拦"。
+        //
+        // 失败信息**始终带上**：链上有人答上来，不代表某个"稳定"供应商没挂 ——
+        // 上一版在这里把 stableFailure 丢了，于是"稳定供应商挂了"不再触发提醒。
         return new ChainRun(answer, answeredBy, failedAt, failure, stableFailedAt, stableFailure);
     }
 

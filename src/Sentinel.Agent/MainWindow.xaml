@@ -771,7 +771,7 @@
                         <StackPanel DockPanel.Dock="Top">
                             <TextBlock Style="{StaticResource H1}" Text="判断链" />
                             <TextBlock Style="{StaticResource Hint}" Margin="0,7,0,0" TextWrapping="Wrap"
-                                       Text="从上到下依次问：任一模型说违规就拦下；说「不违规」才交给下一个；全都说不违规才放行。便宜的小模型放上面、贵的放下面 —— 小模型先拦下的就不再问贵的。" />
+                                       Text="从上到下依次问：模型给出「正常判断」和「从严判断」，两者一致就定论；不一致（拿不准）才交给下一个；都拿不准时用最后一个的正常判断。便宜的小模型放上面、贵的放下面 —— 只有拿不准时才花贵的那份钱。" />
 
                             <WrapPanel Margin="0,14,0,0">
                                 <Button Style="{StaticResource PrimaryIconButton}" Tag="{StaticResource IconPlus}"

@@ -629,8 +629,19 @@ public class ModelTests
     private sealed class PerModelHandler : HttpMessageHandler
     {
         private readonly Dictionary<string, bool> _violates;
+        private readonly Dictionary<string, bool> _strict;
+        private readonly bool _emitStrict;
 
-        public PerModelHandler(Dictionary<string, bool> violates) => _violates = violates;
+        /// <param name="strict">每个模型的"从严判断"；不给就与正常判断一致（= 模型有把握）。</param>
+        /// <param name="emitStrict">false = 只回两个元素（模拟没照格式回的模型）。</param>
+        public PerModelHandler(Dictionary<string, bool> violates,
+                               Dictionary<string, bool>? strict = null,
+                               bool emitStrict = true)
+        {
+            _violates = violates;
+            _strict = strict ?? new Dictionary<string, bool>();
+            _emitStrict = emitStrict;
+        }
 
         public List<string> Asked { get; } = new();
 
@@ -652,7 +663,11 @@ public class ModelTests
             Asked.Add(model);
 
             var violates = _violates.TryGetValue(model, out var flag) && flag;
-            var answer = violates ? "[true, \"违规\"]" : "[false, \"\"]";
+            var strict = _strict.TryGetValue(model, out var wanted) ? wanted : violates;
+
+            var answer = _emitStrict
+                ? $"[{(violates ? "true" : "false")}, \"原因\", {(strict ? "true" : "false")}]"
+                : $"[{(violates ? "true" : "false")}, \"原因\"]";
 
             var json = "{\"choices\":[{\"message\":{\"content\":"
                        + System.Text.Json.JsonSerializer.Serialize(answer) + "}}]}";
@@ -702,10 +717,30 @@ public class ModelTests
     }
 
     [Fact]
-    public async Task 责任链_前一个说放行才问下一个()
+    public async Task 判断一致就定论_不再问贵的()
     {
+        // 用户点出来的毛病：原来"不违规就往下问"，于是**越守规矩越费钱** ——
+        // 每个正常页面都要问完整条链。现在只有两个判断打架才往下走。
         var config = ChainConfig(("cheap", false), ("expensive", true));
         var handler = new PerModelHandler(new() { ["cheap"] = false, ["expensive"] = true });
+        var supervisor = ChainSupervisor(config, handler);
+
+        supervisor.Request("r", "禁令", Snapshot());
+        await WaitUntil(() => supervisor.Lookup("r", Snapshot()).Kind == ModelVerdictKind.Allowed);
+
+        Assert.Equal(new[] { "cheap" }, handler.Asked);   // 贵的那个一次都没被调用
+    }
+
+    [Fact]
+    public async Task 两个判断打架才往下走()
+    {
+        // 便宜的正常判"不违规"、从严判"违规" —— 它自己拿不准，交给贵的。
+        var config = ChainConfig(("cheap", false), ("expensive", true));
+
+        var handler = new PerModelHandler(
+            new() { ["cheap"] = false, ["expensive"] = true },
+            new() { ["cheap"] = true });
+
         var supervisor = ChainSupervisor(config, handler);
 
         supervisor.Request("r", "禁令", Snapshot());
@@ -715,16 +750,37 @@ public class ModelTests
     }
 
     [Fact]
-    public async Task 责任链_全都说不违规才算放行()
+    public async Task 全都拿不准时_用最后一个的正常判断()
     {
         var config = ChainConfig(("a", false), ("b", false));
-        var handler = new PerModelHandler(new() { ["a"] = false, ["b"] = false });
+
+        // 两个都"正常说不违规、从严说违规" —— 一路拿不准，最后用 b 的正常判断（不违规）。
+        var handler = new PerModelHandler(
+            new() { ["a"] = false, ["b"] = false },
+            new() { ["a"] = true, ["b"] = true });
+
         var supervisor = ChainSupervisor(config, handler);
 
         supervisor.Request("r", "禁令", Snapshot());
         await WaitUntil(() => supervisor.Lookup("r", Snapshot()).Kind == ModelVerdictKind.Allowed);
 
         Assert.Equal(2, handler.Asked.Count);
+    }
+
+    [Fact]
+    public async Task 模型没给从严值_当作拿不准继续问()
+    {
+        var config = ChainConfig(("cheap", false), ("expensive", true));
+        var handler = new PerModelHandler(
+            new() { ["cheap"] = false, ["expensive"] = true },
+            emitStrict: false);
+
+        var supervisor = ChainSupervisor(config, handler);
+
+        supervisor.Request("r", "禁令", Snapshot());
+        await WaitUntil(() => supervisor.Lookup("r", Snapshot()).Kind == ModelVerdictKind.Blocked);
+
+        Assert.Equal(new[] { "cheap", "expensive" }, handler.Asked);
     }
 
     [Fact]
@@ -863,7 +919,11 @@ public class ModelTests
     public async Task 自检走的是整条链_不是只问第一个()
     {
         var config = ChainConfig(("cheap", false), ("expensive", true));
-        var handler = new PerModelHandler(new() { ["cheap"] = false, ["expensive"] = true });
+
+        var handler = new PerModelHandler(
+            new() { ["cheap"] = false, ["expensive"] = true },
+            new() { ["cheap"] = true });   // 第一个拿不准 → 往下问
+
         var supervisor = ChainSupervisor(config, handler);
 
         var asked = await supervisor.DiagnoseAsync("禁令", Snapshot(), CancellationToken.None);
@@ -877,7 +937,7 @@ public class ModelTests
     }
 
     [Fact]
-    public async Task 自检也遵守有人判违规就不问后面()
+    public async Task 自检也遵守判断一致就不再往下问()
     {
         var config = ChainConfig(("cheap", true), ("expensive", false));
         var handler = new PerModelHandler(new() { ["cheap"] = true, ["expensive"] = false });
