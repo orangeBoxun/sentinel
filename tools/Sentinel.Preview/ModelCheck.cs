@@ -235,6 +235,10 @@ internal static class ModelCheck
         Console.WriteLine($"三张图     : 折线 {line.Children.Count} 个元素 / 柱状 {bar.Children.Count} / 饼 {pie.Children.Count}");
         ok &= line.Children.Count > 0 && bar.Children.Count > 0 && pie.Children.Count > 0;
 
+        var tipOpen = window.ShowUsageTipForCheck();
+        Console.WriteLine($"悬浮窗     : {(tipOpen ? "能弹出来" : "弹不出来")}");
+        ok &= tipOpen;
+
         // 切回「所有供应商」，确认来回切不炸
         ((RadioButton)window.FindName("ModelTabProviders")!).IsChecked = true;
         Pump();

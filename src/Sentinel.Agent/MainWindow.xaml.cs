@@ -2060,6 +2060,24 @@ public partial class MainWindow : Window
             RenderUsage();
     }
 
+    /// <summary>离线检查用：把折线图的悬浮窗打开一次，返回它是不是真的开了。</summary>
+    public bool ShowUsageTipForCheck()
+    {
+        if (UsageLineChart.Tag is not ChartTooltip tooltip
+            || UsageLineChart.Children.OfType<UIElement>().LastOrDefault() is not { } target)
+        {
+            return false;
+        }
+
+        tooltip.Show(target, new Charts.Tip("检查", new[] { "悬浮窗内容", "第二行" }),
+                     new System.Windows.Point(40, 40));
+
+        var open = tooltip.IsOpen;
+        tooltip.Close();
+
+        return open;
+    }
+
     private void UsageCanvas_SizeChanged(object sender, SizeChangedEventArgs e)
     {
         if (_usageFiltersBuilt)
@@ -2222,7 +2240,16 @@ public partial class MainWindow : Window
 
         UsageCacheText.Text = cachedBase > 0 ? $"{cachedHits / cachedBase:P0}" : "—";
 
-        Charts.Line(UsageLineChart, labels, series);
+        Charts.Line(UsageLineChart, labels, series, index =>
+        {
+            var lines = shown
+                .Select(id => $"{NameOf(id)}：{ValueOn(id, daily[index]):N0}")
+                .ToList();
+
+            lines.Add($"合计：{shown.Sum(id => ValueOn(id, daily[index])):N0}");
+
+            return new Charts.Tip(labels[index], lines);
+        });
 
         UsageLineLegend.Children.Clear();
 
@@ -2254,8 +2281,27 @@ public partial class MainWindow : Window
             .Select(id => (Label: NameOf(id), Value: daily.Sum(d => ValueOn(id, d))))
             .ToList();
 
-        Charts.Bars(UsageBarChart, totals);
-        Charts.Pie(UsagePieChart, totals);
+        var grandTotal = totals.Sum(t => t.Value);
+
+        Charts.Tip TipFor(int index)
+        {
+            var id = shown[index];
+            var counters = rangeTotals.GetValueOrDefault(id);
+            var share = grandTotal > 0 ? totals[index].Value / grandTotal : 0;
+
+            var lines = new List<string> { $"占比 {share:P0}" };
+
+            if (counters is not null)
+            {
+                lines.Add($"请求 {counters.Requests:N0} 次 · 失败 {counters.Failures:N0} 次");
+                lines.Add($"token {counters.PromptTokens + counters.CompletionTokens:N0}");
+            }
+
+            return new Charts.Tip(NameOf(id), lines);
+        }
+
+        Charts.Bars(UsageBarChart, totals, TipFor);
+        Charts.Pie(UsagePieChart, totals, TipFor);
 
         ModelUsageStatus.Text = totals.Sum(t => t.Value) <= 0
             ? "这个范围内还没有用量记录 —— 模型监督判过一次之后这里才有数据。"
