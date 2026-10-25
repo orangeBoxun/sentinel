@@ -110,8 +110,8 @@ internal static class ModelCheck
         Console.WriteLine($"取过之后模型名还是  : 「{code}」");
         ok &= code == "some-model";
 
-        // ---- 四、勾上"启用"，保存
-        ((CheckBox)window.FindName("ModelActiveCheck")!).IsChecked = true;
+        // ---- 四、保存（是否参与判断在「判断链」页里排，不在编辑页）
+        ((CheckBox)window.FindName("ModelStableCheck")!).IsChecked = true;
         Pump();
 
         Click(window, "保存");
@@ -126,6 +126,14 @@ internal static class ModelCheck
 
         var onDisk = OnDisk(configPath);
         var saved = onDisk.Models.FirstOrDefault(m => m.Name == "示例中转");
+
+        // 把它加入判断链（界面上是「启用新供应商…」那个弹窗，这里直接调同一个方法）。
+        if (saved is not null)
+        {
+            window.AddProvidersToChain(new[] { saved.Id });
+            Pump();
+            onDisk = OnDisk(configPath);
+        }
 
         // 勾"参与判断"= 加入判断链（排在后面），不再抢唯一的位置：
         // ActiveModelId 跟着链的首位走，所以还是原来那个。
@@ -143,6 +151,25 @@ internal static class ModelCheck
         Console.WriteLine();
         Console.WriteLine($"打开已有的服务商，模型名框里是: 「{loaded}」");
         ok &= loaded == "deepseek-flash";
+
+        // ---- 六、「判断链」页：切过去，看它画出来没有、内容对不对
+        ((RadioButton)window.FindName("ModelTabChain")!).IsChecked = true;
+        Pump();
+
+        var chainList = (ItemsControl)window.FindName("ChainList")!;
+        var chainRows = chainList.Items.Count;
+        var chainStatus = ((TextBlock)window.FindName("ModelChainStatus")!).Text;
+
+        Console.WriteLine();
+        Console.WriteLine($"判断链页   : {chainRows} 行 / 状态「{chainStatus}」");
+
+        ok &= chainRows == 2;
+        ok &= chainStatus.Contains("2 个供应商");
+
+        // 切回「所有供应商」，确认来回切不炸
+        ((RadioButton)window.FindName("ModelTabProviders")!).IsChecked = true;
+        Pump();
+        ok &= ((ItemsControl)window.FindName("ModelList")!).Items.Count == 2;
 
         window.Close();
 

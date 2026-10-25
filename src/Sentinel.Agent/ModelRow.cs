@@ -45,3 +45,89 @@ public sealed class ModelRow
             : first.ToString();
     }
 }
+
+/// <summary>
+/// 「判断链」页里的一行：顺序、名字、是否稳定、连通性测试结果。
+///
+/// <para>
+/// 单独一个对象（而不是直接绑 <see cref="ModelProvider"/>）：位置和测试结果都不属于配置，
+/// 而且都会在界面上变，需要通知。
+/// </para>
+/// </summary>
+public sealed class ChainRow : System.ComponentModel.INotifyPropertyChanged
+{
+    private int _position;
+    private string _testResult = "";
+    private System.Windows.Visibility _resultVisibility = System.Windows.Visibility.Collapsed;
+
+    public ChainRow(ModelProvider provider, int position)
+    {
+        Provider = provider;
+        _position = position;
+        Name = string.IsNullOrWhiteSpace(provider.Name) ? "(没名字)" : provider.Name;
+        Endpoint = string.IsNullOrWhiteSpace(provider.Endpoint) ? "(还没填请求地址)" : provider.Endpoint;
+        Initial = InitialOf(provider.Name);
+    }
+
+    public ModelProvider Provider { get; }
+
+    public string Name { get; }
+
+    public string Endpoint { get; }
+
+    public string Initial { get; }
+
+    /// <summary>从 1 开始的判断顺序。</summary>
+    public string Position => (_position + 1).ToString();
+
+    public System.Windows.Visibility StableVisibility =>
+        Provider.Stable ? System.Windows.Visibility.Visible : System.Windows.Visibility.Collapsed;
+
+    public string TestResult
+    {
+        get => _testResult;
+        set
+        {
+            _testResult = value;
+            ResultVisibility = string.IsNullOrEmpty(value)
+                ? System.Windows.Visibility.Collapsed
+                : System.Windows.Visibility.Visible;
+
+            Raise(nameof(TestResult));
+        }
+    }
+
+    public System.Windows.Visibility ResultVisibility
+    {
+        get => _resultVisibility;
+        private set
+        {
+            _resultVisibility = value;
+            Raise(nameof(ResultVisibility));
+        }
+    }
+
+    public void SetPosition(int index)
+    {
+        _position = index;
+        Raise(nameof(Position));
+    }
+
+    public event System.ComponentModel.PropertyChangedEventHandler? PropertyChanged;
+
+    private void Raise(string name) =>
+        PropertyChanged?.Invoke(this, new System.ComponentModel.PropertyChangedEventArgs(name));
+
+    private static string InitialOf(string name)
+    {
+        var trimmed = name.Trim();
+
+        if (trimmed.Length == 0)
+            return "?";
+
+        var first = trimmed[0];
+        return char.IsAsciiLetter(first)
+            ? char.ToUpperInvariant(first).ToString()
+            : first.ToString();
+    }
+}

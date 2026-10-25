@@ -2,6 +2,7 @@ using System.Collections.ObjectModel;
 using System.Diagnostics;
 using System.IO;
 using System.Windows;
+using System.Windows.Input;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
 using System.Windows.Threading;
@@ -415,7 +416,7 @@ public partial class MainWindow : Window
         ModelEndpointBox.Text, ModelListEndpointBox.Text, ModelAutoCompleteCheck.IsChecked,
         ModelCodePicker.Text,
         (ModelFormatBox.SelectedItem as Choice<ApiFormat>)?.Value,
-        ModelActiveCheck.IsChecked, ModelOrderBox.Text,
+        ModelStableCheck.IsChecked,
         CurrentKey());
 
     // ------------------------------------------------------------------ 保险箱
@@ -1984,6 +1985,244 @@ public partial class MainWindow : Window
             : new List<string> { config.ActiveModelId };
     }
 
+    // ------------------------------------------------------------------ 判断链
+
+    private ObservableCollection<ChainRow> _chainRows = new();
+    private ChainRow? _dragging;
+
+    /// <summary>顶部那两个按钮：切换「所有供应商」/「判断链」。</summary>
+    private void ModelTab_Changed(object sender, RoutedEventArgs e)
+    {
+        if (ModelChainView is null || ModelListView is null)
+            return;   // 初始化还没走完
+
+        var chain = ModelTabChain.IsChecked == true;
+
+        ModelListView.Visibility = chain ? Visibility.Collapsed : Visibility.Visible;
+        ModelChainView.Visibility = chain ? Visibility.Visible : Visibility.Collapsed;
+        ModelEditView.Visibility = Visibility.Collapsed;
+
+        if (chain)
+            RefreshChainList();
+    }
+
+    private void RefreshChainList()
+    {
+        var config = _state.Config;
+
+        var providers = ModelChain()
+            .Select(id => config.Models.FirstOrDefault(m => m.Id == id))
+            .Where(m => m is not null)
+            .ToList();
+
+        _chainRows = new ObservableCollection<ChainRow>(
+            providers.Select((m, i) => new ChainRow(m!, i)));
+
+        ChainList.ItemsSource = _chainRows;
+
+        if (providers.Count == 0)
+        {
+            ModelChainStatus.Text =
+                "判断链是空的 —— 模型监督现在什么都不判。点「启用新供应商…」把要用的加进来。";
+            return;
+        }
+
+        var stable = providers.Count(m => m!.Stable);
+
+        ModelChainStatus.Text = stable == 0
+            ? "⚠ 链里一个「能够稳定提供服务」的都没有 —— 它们连不上时不会提醒你。去「所有供应商」里勾上至少一个。"
+            : $"判断链上有 {providers.Count} 个供应商，其中 {stable} 个标了「稳定」。"
+              + "拖动左侧 ☰ 可以调整先后顺序。";
+    }
+
+    /// <summary>把几个供应商追加到判断链尾。弹窗和离线检查都走这里。</summary>
+    public void AddProvidersToChain(IEnumerable<string> ids) => PersistChain(ModelChain().Concat(ids));
+
+    /// <summary>把链写回配置并保存。顺序变化是中性的，增删走放宽判定（可能要令牌）。</summary>
+    private void PersistChain(IEnumerable<string> ids)
+    {
+        var chain = ids.ToList();
+        var config = _state.Config;
+
+        config.ModelChain = chain;
+
+        // ActiveModelId 跟着链的首位：界面显示、以及老版本读这份配置时都用它。
+        config.ActiveModelId = chain.FirstOrDefault();
+
+        SaveAndReport();
+
+        RefreshModelList();
+        RefreshModelStatus();
+        RefreshChainList();
+    }
+
+    private void AddChainProviders_Click(object sender, RoutedEventArgs e)
+    {
+        var config = _state.Config;
+        var chain = ModelChain();
+        var candidates = config.Models.Where(m => !chain.Contains(m.Id)).ToList();
+
+        if (candidates.Count == 0)
+        {
+            ModelChainStatus.Text = "所有供应商都已经在链里了。";
+            return;
+        }
+
+        var window = new Window
+        {
+            Title = "启用新供应商",
+            Width = 460,
+            SizeToContent = SizeToContent.Height,
+            WindowStartupLocation = WindowStartupLocation.CenterOwner,
+            Owner = this,
+            ResizeMode = ResizeMode.NoResize,
+        };
+
+        var panel = new StackPanel { Margin = new Thickness(22) };
+
+        panel.Children.Add(new TextBlock
+        {
+            Text = "勾选要加入判断链的供应商（按这里从上到下的顺序，追加到链尾）：",
+            TextWrapping = TextWrapping.Wrap,
+            Margin = new Thickness(0, 0, 0, 14),
+        });
+
+        var boxes = new List<(CheckBox Box, ModelProvider Provider)>();
+
+        foreach (var provider in candidates)
+        {
+            var box = new CheckBox
+            {
+                Content = $"{provider.Name}（{provider.Model}）",
+                Margin = new Thickness(0, 0, 0, 10),
+            };
+
+            boxes.Add((box, provider));
+            panel.Children.Add(box);
+        }
+
+        var buttons = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            HorizontalAlignment = HorizontalAlignment.Right,
+            Margin = new Thickness(0, 12, 0, 0),
+        };
+
+        var ok = new Button { Content = "加入", Padding = new Thickness(18, 6, 18, 6), IsDefault = true };
+        var cancel = new Button
+        {
+            Content = "取消",
+            Padding = new Thickness(18, 6, 18, 6),
+            Margin = new Thickness(8, 0, 0, 0),
+            IsCancel = true,
+        };
+
+        ok.Click += (_, _) => { window.DialogResult = true; window.Close(); };
+
+        buttons.Children.Add(ok);
+        buttons.Children.Add(cancel);
+        panel.Children.Add(buttons);
+
+        window.Content = panel;
+
+        if (window.ShowDialog() != true)
+            return;
+
+        var added = boxes.Where(b => b.Box.IsChecked == true).Select(b => b.Provider.Id).ToList();
+
+        if (added.Count > 0)
+            AddProvidersToChain(added);
+    }
+
+    private void RemoveChainRow_Click(object sender, RoutedEventArgs e)
+    {
+        if ((sender as FrameworkElement)?.DataContext is not ChainRow row)
+            return;
+
+        // 从链里拿掉一个供应商 = 放宽（它本来会拦下的东西，现在没人拦了）——
+        // 保存时可能要令牌，被拒会走和解锁那套一样的流程。
+        PersistChain(ModelChain().Where(id => id != row.Provider.Id));
+    }
+
+    private void ChainDragStart(object sender, MouseButtonEventArgs e)
+    {
+        if ((sender as FrameworkElement)?.DataContext is not ChainRow row)
+            return;
+
+        _dragging = row;
+        (sender as UIElement)?.CaptureMouse();
+        e.Handled = true;
+    }
+
+    private void ChainDragMove(object sender, MouseEventArgs e)
+    {
+        if (_dragging is null || e.LeftButton != MouseButtonState.Pressed)
+            return;
+
+        for (var i = 0; i < _chainRows.Count; i++)
+        {
+            if (ChainList.ItemContainerGenerator.ContainerFromIndex(i) is not FrameworkElement container
+                || !container.IsMouseOver)
+            {
+                continue;
+            }
+
+            var from = _chainRows.IndexOf(_dragging);
+
+            if (from >= 0 && from != i)
+            {
+                _chainRows.Move(from, i);
+
+                for (var n = 0; n < _chainRows.Count; n++)
+                    _chainRows[n].SetPosition(n);
+            }
+
+            break;
+        }
+    }
+
+    private void ChainDragEnd(object sender, MouseButtonEventArgs e)
+    {
+        if (_dragging is null)
+            return;
+
+        (sender as UIElement)?.ReleaseMouseCapture();
+        _dragging = null;
+
+        // 顺序只影响"先问谁"（省不省钱），不影响松紧 —— 所以随手拖、随手存。
+        PersistChain(_chainRows.Select(r => r.Provider.Id));
+    }
+
+    /// <summary>整条链的连通性：只测地址可达（不花钱）。稳定供应商不通会直接说出来。</summary>
+    private async void TestChain_Click(object sender, RoutedEventArgs e)
+    {
+        if (_chainRows.Count == 0)
+        {
+            ModelChainStatus.Text = "链是空的，没什么可测的。";
+            return;
+        }
+
+        ModelChainStatus.Text = "正在测（只测地址可达，不花钱）…";
+
+        var connectivity = new Connectivity();
+        var brokenStable = new List<string>();
+
+        foreach (var row in _chainRows)
+        {
+            var reachable = await connectivity.IsReachableAsync(row.Provider.Endpoint);
+
+            row.TestResult = reachable ? "✓ 地址可达" : "✗ 连不上";
+
+            if (!reachable && row.Provider.Stable)
+                brokenStable.Add(row.Provider.Name);
+        }
+
+        ModelChainStatus.Text = brokenStable.Count == 0
+            ? "所有「稳定」的供应商都可达 ✓"
+            : $"⚠ 这些稳定供应商连不上：{string.Join("、", brokenStable)} —— "
+              + "监控会反复全屏提醒，直到它恢复，或者你把它从链里移除（那要令牌）。";
+    }
+
     private void RefreshModelList()
     {
         // 每次重绑都重新生成行对象：一行要显示的“使用中”来自
@@ -1997,6 +2236,8 @@ public partial class MainWindow : Window
         ModelEmptyHint.Visibility = _state.Config.Models.Count == 0
             ? Visibility.Visible
             : Visibility.Collapsed;
+
+        RefreshChainList();
     }
 
     // ---- 列表页 ↔ 编辑页
@@ -2104,11 +2345,7 @@ public partial class MainWindow : Window
             : new[] { provider.Model };
         ModelCodePicker.SelectedIndex = string.IsNullOrWhiteSpace(provider.Model) ? -1 : 0;
 
-        var chain = ModelChain();
-        var position = chain.IndexOf(provider.Id);
-
-        ModelActiveCheck.IsChecked = position >= 0;
-        ModelOrderBox.Text = (position >= 0 ? position + 1 : chain.Count + 1).ToString();
+        ModelStableCheck.IsChecked = provider.Stable;
         ModelKeySecret.Password = provider.ApiKey;
         ModelKeyBox.Text = provider.ApiKey;
         SetKeyVisible(false);
@@ -2422,25 +2659,11 @@ public partial class MainWindow : Window
         if (ModelFormatBox.SelectedItem is Choice<ApiFormat> format)
             _selectedModel.Format = format.Value;
 
-        // 勾上它 = 这个服务商参与判断；「判断顺序」决定先问谁。
+        // 是否参与判断、先后顺序，都在「判断链」页里管；这里只剩"能够稳定提供服务"。
         //
-        // **但不能反过来说：没勾 ≠ 关掉模型监督。** 原来写的是"没勾就把 ActiveModelId 清空"，
-        // 而新建的服务商默认不勾 —— 于是"添加一条管道"被记成了"关掉了模型监督"，要令牌。
-        // 人只是在加管道，什么都没想放宽。
-        //
-        // 现在维护的是**链**：从链里拿掉一个模型才算放宽，链空了才等于停掉监督。
-        var chain = ModelChain().Where(id => id != _selectedModel.Id).ToList();
-
-        if (ModelActiveCheck.IsChecked == true)
-        {
-            var order = ParseInt(ModelOrderBox.Text, chain.Count + 1, 1, 99);
-            chain.Insert(Math.Clamp(order - 1, 0, chain.Count), _selectedModel.Id);
-        }
-
-        _state.Config.ModelChain = chain;
-
-        // ActiveModelId 跟着链的首位：界面显示、以及老版本读这份配置时都用它。
-        _state.Config.ActiveModelId = chain.FirstOrDefault();
+        // 取消它 = 放弃「每页必判」那条保证 = 放宽，所以走和其他编辑同一条保存路径：
+        // 保护开着的时候会被拒绝，然后弹令牌。
+        _selectedModel.Stable = ModelStableCheck.IsChecked == true;
 
         if (isNew)
             _state.Config.Models.Add(_selectedModel);

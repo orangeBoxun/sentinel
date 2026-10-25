@@ -623,8 +623,51 @@
 
                 <Grid Margin="32,26,32,26">
 
+                    <Grid.Resources>
+                        <!-- 顶部那两个切换按钮：像左右两个开关，选中那个底色变浅。 -->
+                        <Style x:Key="SegmentedOption" TargetType="RadioButton">
+                            <Setter Property="Padding" Value="20,9" />
+                            <Setter Property="Margin" Value="0,0,10,0" />
+                            <Setter Property="Background" Value="{StaticResource Surface}" />
+                            <Setter Property="Foreground" Value="{StaticResource TextSecondary}" />
+                            <Setter Property="Cursor" Value="Hand" />
+                            <Setter Property="Template">
+                                <Setter.Value>
+                                    <ControlTemplate TargetType="RadioButton">
+                                        <Border CornerRadius="8" Padding="{TemplateBinding Padding}"
+                                                Background="{TemplateBinding Background}"
+                                                BorderBrush="{StaticResource Hairline}" BorderThickness="1">
+                                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"
+                                                              TextElement.Foreground="{TemplateBinding Foreground}" />
+                                        </Border>
+                                    </ControlTemplate>
+                                </Setter.Value>
+                            </Setter>
+                            <Style.Triggers>
+                                <Trigger Property="IsChecked" Value="True">
+                                    <Setter Property="Background" Value="{StaticResource SelectionFill}" />
+                                    <Setter Property="Foreground" Value="{StaticResource SelectionInk}" />
+                                </Trigger>
+                            </Style.Triggers>
+                        </Style>
+                    </Grid.Resources>
+
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                    </Grid.RowDefinitions>
+
+                    <StackPanel Grid.Row="0" Orientation="Horizontal" Margin="0,0,0,18">
+                        <RadioButton x:Name="ModelTabProviders" GroupName="ModelTabs"
+                                     Style="{StaticResource SegmentedOption}"
+                                     Content="所有供应商" IsChecked="True" Checked="ModelTab_Changed" />
+                        <RadioButton x:Name="ModelTabChain" GroupName="ModelTabs"
+                                     Style="{StaticResource SegmentedOption}"
+                                     Content="判断链" Checked="ModelTab_Changed" />
+                    </StackPanel>
+
                     <!-- ==================== 列表（默认看到的就是它） ==================== -->
-                    <DockPanel x:Name="ModelListView">
+                    <DockPanel x:Name="ModelListView" Grid.Row="1">
                         <Grid DockPanel.Dock="Top">
                             <StackPanel>
                                 <TextBlock Style="{StaticResource H1}" Text="大语言模型" />
@@ -678,12 +721,12 @@
                                                                    VerticalAlignment="Center" />
                                                         <Border x:Name="ActiveBadge" CornerRadius="4" Padding="7,1" Margin="10,1,0,0"
                                                                 Background="{StaticResource SelectionFill}" Visibility="Collapsed">
-                                                            <TextBlock Text="使用中" FontSize="12"
+                                                            <TextBlock Text="在链里" FontSize="12"
                                                                        Foreground="{StaticResource SelectionInk}" />
                                                         </Border>
                                                         <Border x:Name="IdleBadge" CornerRadius="4" Padding="7,1" Margin="10,1,0,0"
                                                                 Background="{StaticResource Fill}" Visibility="Collapsed">
-                                                            <TextBlock Text="未启用" FontSize="12"
+                                                            <TextBlock Text="未参与" FontSize="12"
                                                                        Foreground="{StaticResource TextTertiary}" />
                                                         </Border>
                                                     </StackPanel>
@@ -720,8 +763,92 @@
                         </ScrollViewer>
                     </DockPanel>
 
+                    <!-- ==================== 判断链（顶部第二个按钮切过来） ==================== -->
+                    <DockPanel x:Name="ModelChainView" Grid.Row="1" Visibility="Collapsed">
+                        <StackPanel DockPanel.Dock="Top">
+                            <TextBlock Style="{StaticResource H1}" Text="判断链" />
+                            <TextBlock Style="{StaticResource Hint}" Margin="0,7,0,0" TextWrapping="Wrap"
+                                       Text="从上到下依次问：任一模型说违规就拦下；说「不违规」才交给下一个；全都说不违规才放行。便宜的小模型放上面、贵的放下面 —— 小模型先拦下的就不再问贵的。" />
+
+                            <WrapPanel Margin="0,14,0,0">
+                                <Button Style="{StaticResource PrimaryIconButton}" Tag="{StaticResource IconPlus}"
+                                        Content="启用新供应商…" Click="AddChainProviders_Click" />
+                                <Button Style="{StaticResource ToolIconButton}" Tag="{StaticResource IconPlay}"
+                                        Content="测试整条链" Margin="10,0,0,0" Click="TestChain_Click" />
+                            </WrapPanel>
+
+                            <TextBlock x:Name="ModelChainStatus" Style="{StaticResource Hint}"
+                                       Margin="0,12,0,0" TextWrapping="Wrap" />
+                        </StackPanel>
+
+                        <ScrollViewer Margin="0,16,0,0" VerticalScrollBarVisibility="Auto">
+                            <ItemsControl x:Name="ChainList">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <Border CornerRadius="8" Padding="12,10" Margin="0,0,0,10"
+                                                Background="{StaticResource Surface}"
+                                                BorderBrush="{StaticResource Hairline}" BorderThickness="1"
+                                                SnapsToDevicePixels="True">
+                                            <Grid>
+                                                <Grid.ColumnDefinitions>
+                                                    <ColumnDefinition Width="Auto" />
+                                                    <ColumnDefinition Width="Auto" />
+                                                    <ColumnDefinition Width="Auto" />
+                                                    <ColumnDefinition Width="*" />
+                                                    <ColumnDefinition Width="Auto" />
+                                                </Grid.ColumnDefinitions>
+
+                                                <!-- 拖拽手柄：按住上下拖就换顺序 -->
+                                                <TextBlock Grid.Column="0" Text="☰" FontSize="17" Cursor="SizeAll"
+                                                           VerticalAlignment="Center" Margin="2,0,12,0"
+                                                           Foreground="{StaticResource TextTertiary}"
+                                                           ToolTip="按住上下拖动，调整判断顺序"
+                                                           PreviewMouseLeftButtonDown="ChainDragStart"
+                                                           PreviewMouseMove="ChainDragMove"
+                                                           PreviewMouseLeftButtonUp="ChainDragEnd" />
+
+                                                <TextBlock Grid.Column="1" Text="{Binding Position}" VerticalAlignment="Center"
+                                                           Margin="0,0,12,0" Foreground="{StaticResource TextTertiary}" />
+
+                                                <Border Grid.Column="2" Width="34" Height="34" CornerRadius="8"
+                                                        Background="{StaticResource TintPlumSurface}" VerticalAlignment="Center">
+                                                    <TextBlock Text="{Binding Initial}" FontSize="15"
+                                                               Foreground="{StaticResource TintPlum}"
+                                                               HorizontalAlignment="Center" VerticalAlignment="Center" />
+                                                </Border>
+
+                                                <StackPanel Grid.Column="3" Margin="12,0,12,0" VerticalAlignment="Center">
+                                                    <StackPanel Orientation="Horizontal">
+                                                        <TextBlock Text="{Binding Name}" FontSize="15"
+                                                                   Foreground="{StaticResource TextPrimary}" />
+                                                        <Border CornerRadius="4" Padding="7,1" Margin="10,1,0,0"
+                                                                Background="{StaticResource SelectionFill}"
+                                                                Visibility="{Binding StableVisibility}">
+                                                            <TextBlock Text="稳定" FontSize="12"
+                                                                       Foreground="{StaticResource SelectionInk}" />
+                                                        </Border>
+                                                    </StackPanel>
+
+                                                    <TextBlock Text="{Binding Endpoint}" Style="{StaticResource Caption}"
+                                                               Margin="0,4,0,0" TextTrimming="CharacterEllipsis" />
+
+                                                    <TextBlock Text="{Binding TestResult}" Style="{StaticResource Caption}"
+                                                               Margin="0,3,0,0" Visibility="{Binding ResultVisibility}" />
+                                                </StackPanel>
+
+                                                <Button Grid.Column="4" Style="{StaticResource ToolIconButton}"
+                                                        Tag="{StaticResource IconTrash}" Content="移除"
+                                                        Click="RemoveChainRow_Click" />
+                                            </Grid>
+                                        </Border>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </ScrollViewer>
+                    </DockPanel>
+
                     <!-- ==================== 编辑（点「编辑」整页切换过来） ==================== -->
-                    <ScrollViewer x:Name="ModelEditView" Visibility="Collapsed" VerticalScrollBarVisibility="Auto">
+                    <ScrollViewer x:Name="ModelEditView" Grid.Row="1" Visibility="Collapsed" VerticalScrollBarVisibility="Auto">
                         <StackPanel>
 
                             <StackPanel Orientation="Horizontal" Margin="0,0,0,16">
@@ -746,14 +873,9 @@
                                         </StackPanel>
                                     </WrapPanel>
 
-                                    <CheckBox x:Name="ModelActiveCheck" Content="参与判断（模型监督走它）" />
-                                    <WrapPanel Margin="0,10,0,0">
-                                        <TextBlock Text="判断顺序" VerticalAlignment="Center" Foreground="{StaticResource TextSecondary}" />
-                                        <TextBox x:Name="ModelOrderBox" Style="{StaticResource NumericBox}" Margin="8,0,6,0" />
-                                        <TextBlock Text="（越小越先问）" VerticalAlignment="Center" Foreground="{StaticResource TextSecondary}" />
-                                    </WrapPanel>
-                                    <TextBlock Style="{StaticResource Hint}" Margin="0,8,0,0"
-                                               Text="可以同时勾多个：按顺序挨个问，任一模型说违规就拦，全都说不违规才放行。便宜的小模型放前面、贵的放后面 —— 小模型先拦下的就不再问贵的。一个都不勾等于停掉模型监督，那算放宽。" />
+                                    <CheckBox x:Name="ModelStableCheck" Content="能够稳定提供服务" />
+                                    <TextBlock Style="{StaticResource Hint}" Margin="0,8,0,0" TextWrapping="Wrap"
+                                               Text="标了它的供应商如果连不上，会反复全屏提醒 —— 它代表「每页必判」那条保证，判断链里至少要有一个。取消勾选算放宽（保护开着的时候要令牌）。是否参与判断、先后顺序，在顶部「判断链」页里排。" />
                                 </StackPanel>
                             </Border>
 
