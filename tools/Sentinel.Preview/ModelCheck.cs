@@ -166,6 +166,15 @@ internal static class ModelCheck
         ok &= chainRows == 2;
         ok &= chainStatus.Contains("2 个供应商");
 
+        // 换一下顺序（拖拽落盘走的是同一段逻辑），再确认真的存下去了
+        var beforeOrder = OnDisk(configPath).ModelChain.ToList();
+        window.ReorderChain(0, 1);
+        Pump();
+
+        var afterOrder = OnDisk(configPath).ModelChain.ToList();
+        Console.WriteLine($"调换顺序   : {string.Join(" → ", beforeOrder)}  ⇒  {string.Join(" → ", afterOrder)}");
+        ok &= afterOrder.Count == 2 && afterOrder[0] == beforeOrder[1] && afterOrder[1] == beforeOrder[0];
+
         // 切回「所有供应商」，确认来回切不炸
         ((RadioButton)window.FindName("ModelTabProviders")!).IsChecked = true;
         Pump();

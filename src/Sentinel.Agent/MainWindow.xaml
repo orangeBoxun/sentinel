@@ -782,7 +782,10 @@
                         </StackPanel>
 
                         <ScrollViewer Margin="0,16,0,0" VerticalScrollBarVisibility="Auto">
-                            <ItemsControl x:Name="ChainList">
+                            <ItemsControl x:Name="ChainList"
+                                          PreviewMouseMove="ChainDragMove"
+                                          PreviewMouseLeftButtonUp="ChainDragEnd"
+                                          LostMouseCapture="ChainDragEnd">
                                 <ItemsControl.ItemTemplate>
                                     <DataTemplate>
                                         <Border CornerRadius="8" Padding="12,10" Margin="0,0,0,10"
@@ -803,9 +806,7 @@
                                                            VerticalAlignment="Center" Margin="2,0,12,0"
                                                            Foreground="{StaticResource TextTertiary}"
                                                            ToolTip="按住上下拖动，调整判断顺序"
-                                                           PreviewMouseLeftButtonDown="ChainDragStart"
-                                                           PreviewMouseMove="ChainDragMove"
-                                                           PreviewMouseLeftButtonUp="ChainDragEnd" />
+                                                           PreviewMouseLeftButtonDown="ChainDragStart" />
 
                                                 <TextBlock Grid.Column="1" Text="{Binding Position}" VerticalAlignment="Center"
                                                            Margin="0,0,12,0" Foreground="{StaticResource TextTertiary}" />

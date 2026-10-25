@@ -1989,6 +1989,7 @@ public partial class MainWindow : Window
 
     private ObservableCollection<ChainRow> _chainRows = new();
     private ChainRow? _dragging;
+    private bool _chainOrderChanged;
 
     /// <summary>顶部那两个按钮：切换「所有供应商」/「判断链」。</summary>
     private void ModelTab_Changed(object sender, RoutedEventArgs e)
@@ -2144,13 +2145,29 @@ public partial class MainWindow : Window
         PersistChain(ModelChain().Where(id => id != row.Provider.Id));
     }
 
+    /// <summary>把第 from 行挪到第 to 行并保存。拖拽走的是同一段落盘逻辑。</summary>
+    public void ReorderChain(int from, int to)
+    {
+        if (from < 0 || to < 0 || from >= _chainRows.Count || to >= _chainRows.Count || from == to)
+            return;
+
+        _chainRows.Move(from, to);
+
+        for (var n = 0; n < _chainRows.Count; n++)
+            _chainRows[n].SetPosition(n);
+
+        PersistChain(_chainRows.Select(r => r.Provider.Id));
+    }
+
     private void ChainDragStart(object sender, MouseButtonEventArgs e)
     {
         if ((sender as FrameworkElement)?.DataContext is not ChainRow row)
             return;
 
         _dragging = row;
-        (sender as UIElement)?.CaptureMouse();
+
+        // 捕获在**列表**上，不是手柄上：这样拖出列表边界也能收到移动/松开事件。
+        ChainList.CaptureMouse();
         e.Handled = true;
     }
 
@@ -2159,35 +2176,44 @@ public partial class MainWindow : Window
         if (_dragging is null || e.LeftButton != MouseButtonState.Pressed)
             return;
 
-        for (var i = 0; i < _chainRows.Count; i++)
-        {
-            if (ChainList.ItemContainerGenerator.ContainerFromIndex(i) is not FrameworkElement container
-                || !container.IsMouseOver)
-            {
-                continue;
-            }
+        // 不能用 IsMouseOver：鼠标被捕获之后，除了捕获者以外都不再报告"悬停"，
+        // 于是永远找不到目标行（第一版就是这么拖不动的）。按坐标命中测试才可靠。
+        var hit = ChainList.InputHitTest(e.GetPosition(ChainList)) as DependencyObject;
 
-            var from = _chainRows.IndexOf(_dragging);
+        while (hit is not null and not ContentPresenter)
+            hit = System.Windows.Media.VisualTreeHelper.GetParent(hit);
 
-            if (from >= 0 && from != i)
-            {
-                _chainRows.Move(from, i);
+        if (hit is not ContentPresenter { DataContext: ChainRow target })
+            return;
 
-                for (var n = 0; n < _chainRows.Count; n++)
-                    _chainRows[n].SetPosition(n);
-            }
+        var from = _chainRows.IndexOf(_dragging);
+        var to = _chainRows.IndexOf(target);
 
-            break;
-        }
+        if (from < 0 || to < 0 || from == to)
+            return;
+
+        _chainRows.Move(from, to);
+        _chainOrderChanged = true;
+
+        for (var n = 0; n < _chainRows.Count; n++)
+            _chainRows[n].SetPosition(n);
     }
 
-    private void ChainDragEnd(object sender, MouseButtonEventArgs e)
+    private void ChainDragEnd(object sender, MouseEventArgs e)
     {
         if (_dragging is null)
             return;
 
-        (sender as UIElement)?.ReleaseMouseCapture();
         _dragging = null;
+
+        if (ChainList.IsMouseCaptured)
+            ChainList.ReleaseMouseCapture();
+
+        // 只是点了一下手柄、没真的拖动，就别白存一次配置。
+        if (!_chainOrderChanged)
+            return;
+
+        _chainOrderChanged = false;
 
         // 顺序只影响"先问谁"（省不省钱），不影响松紧 —— 所以随手拖、随手存。
         PersistChain(_chainRows.Select(r => r.Provider.Id));
