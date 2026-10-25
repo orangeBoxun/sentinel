@@ -67,6 +67,10 @@ internal static class DebateCheck
             "  用改过的禁令 + 这一页，重新走一次监控的判断（不带讨论里的任何内容）："
             + "智谱 正常「不违规」从严「违规」；DeepSeek 正常「违规」从严「违规」", IsSystem: true));
 
+        // 常驻输入框发出来的一句话，以及"继续/收工"的内联按钮。
+        debate.Say("这页是我在查资料，不是摸鱼");
+        _ = debate.AskCheckpointInline(3);
+
         Pump();
 
         var width = (int)Math.Max(1, debate.ActualWidth);
@@ -85,36 +89,6 @@ internal static class DebateCheck
 
         Console.WriteLine($"窗口尺寸: {width} x {height}");
         Console.WriteLine($"截图     : {path}");
-
-        // 「要不要继续」那个小窗也画一张：它同样是代码里拼的布局，主题里"固定高度输入框"
-        // 那个坑已经踩过一次，不能只看源码。
-        var checkpoint = debate.BuildCheckpointWindow(3, _ => { });
-        checkpoint.WindowStartupLocation = WindowStartupLocation.Manual;
-        checkpoint.Left = -20000;
-        checkpoint.Top = -20000;
-        checkpoint.ShowInTaskbar = false;
-        checkpoint.ShowActivated = false;
-        checkpoint.Show();
-        Pump();
-
-        var cw = (int)Math.Max(1, checkpoint.ActualWidth);
-        var ch = (int)Math.Max(1, checkpoint.ActualHeight);
-
-        var cbitmap = new System.Windows.Media.Imaging.RenderTargetBitmap(
-            cw, ch, 96, 96, System.Windows.Media.PixelFormats.Pbgra32);
-        cbitmap.Render(checkpoint);
-
-        var cpath = Path.Combine(workDir, "checkpoint-window.png");
-        var cencoder = new System.Windows.Media.Imaging.PngBitmapEncoder();
-        cencoder.Frames.Add(System.Windows.Media.Imaging.BitmapFrame.Create(cbitmap));
-
-        using (var stream = File.Create(cpath))
-            cencoder.Save(stream);
-
-        Console.WriteLine($"继续窗尺寸: {cw} x {ch}");
-        Console.WriteLine($"继续窗截图: {cpath}");
-
-        checkpoint.Close();
 
         // 通过之后单独展示补丁的那个窗口，也画一张。
         var patchWindow = debate.BuildPatchWindow(new[]
@@ -151,7 +125,7 @@ internal static class DebateCheck
         patchWindow.Close();
         debate.Close();
 
-        return File.Exists(path) && File.Exists(cpath) && File.Exists(ppath) ? 0 : 1;
+        return File.Exists(path) && File.Exists(ppath) ? 0 : 1;
     }
 
     private static void WriteConfig(string path)

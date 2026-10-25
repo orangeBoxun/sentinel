@@ -327,6 +327,93 @@ public class DebateTests
     }
 
     [Fact]
+    public async Task 随时发的话会在下一次模型开口前被带上_但不会进重判()
+    {
+        var handler = new ScriptedHandler { Patched = _ => "[false, \"还是漏\", false]" };
+        var pending = new Queue<string>(new[] { "这页是我在查资料，不是摸鱼" });
+
+        var lines = new List<DebateLine>();
+        var debate = new ModelDebate(new ModelClient(new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(10) }));
+
+        var outcome = await debate.RunAsync(
+            Provider("a"), Provider("b"),
+            "禁止与学习工作无关的浏览", Snapshot(),
+            "违规", "我在查资料",
+            line => lines.Add(line),
+            CancellationToken.None,
+            rounds => Task.FromResult(new DebateCheckpoint(false)),
+            () => pending.Count > 0 ? new[] { pending.Dequeue() } : Array.Empty<string>());
+
+        Assert.NotNull(outcome);
+
+        // 第一次诊断（第 3 次请求）就该看到这句话。
+        Assert.Contains("这页是我在查资料，不是摸鱼", handler.Calls[2].Body);
+
+        // 但重判是干净的：补丁加了之后那两次判定里不能再出现这句话。
+        var verifyCalls = handler.Calls.Where(c =>
+            c.Body.Contains("内容审查器", StringComparison.Ordinal)
+            && c.Body.Contains("就从严判违规", StringComparison.Ordinal)).ToList();
+
+        Assert.NotEmpty(verifyCalls);
+        Assert.All(verifyCalls, c => Assert.DoesNotContain("这页是我在查资料", c.Body));
+    }
+
+    [Fact]
+    public async Task 每批轮数可以改成五()
+    {
+        var handler = new ScriptedHandler { Patched = _ => "[false, \"还是漏\", false]" };
+        var asked = 0;
+
+        var lines = new List<DebateLine>();
+        var debate = new ModelDebate(new ModelClient(new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(10) }));
+
+        var outcome = await debate.RunAsync(
+            Provider("a"), Provider("b"),
+            "禁止与学习工作无关的浏览", Snapshot(),
+            "违规", "我在查资料",
+            line => lines.Add(line),
+            CancellationToken.None,
+            _ =>
+            {
+                asked++;
+                return Task.FromResult(new DebateCheckpoint(false));
+            },
+            roundsPerBatch: 5);
+
+        Assert.Equal(1, asked);
+        Assert.Equal(5, outcome!.Rounds);
+    }
+
+    [Fact]
+    public async Task 不限轮数时不打断_最多跑到上限()
+    {
+        var handler = new ScriptedHandler { Patched = _ => "[false, \"还是漏\", false]" };
+        var asked = 0;
+
+        var lines = new List<DebateLine>();
+        var debate = new ModelDebate(new ModelClient(new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(10) }));
+
+        var outcome = await debate.RunAsync(
+            Provider("a"), Provider("b"),
+            "禁止与学习工作无关的浏览", Snapshot(),
+            "违规", "我在查资料",
+            line => lines.Add(line),
+            CancellationToken.None,
+            _ =>
+            {
+                asked++;
+                return Task.FromResult(new DebateCheckpoint(true));
+            },
+            unlimited: true);
+
+        Assert.Equal(0, asked);
+        Assert.Equal(ModelDebate.MaxAutoRounds, outcome!.Rounds);
+        Assert.False(outcome.Verified);
+
+        Assert.Contains(lines, l => l.IsSystem && l.Text.Contains("防止一直烧下去"));
+    }
+
+    [Fact]
     public async Task 有个模型连不上就停下来说明_不做无意义的讨论()
     {
         var handler = new ScriptedHandler();

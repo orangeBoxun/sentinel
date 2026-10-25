@@ -44,8 +44,11 @@ public sealed class ModelDebate
     private const int MaxBodyChars = 2000;
     private const int MaxPatchLines = 3;
 
-    /// <summary>跑完这么多轮还没通过，就停下来问用户一次（继续与否、要不要补充信息）。</summary>
+    /// <summary>跑完这么多轮还没通过，就停下来问用户一次（继续与否）。</summary>
     public const int RoundsPerBatch = 3;
+
+    /// <summary>选了「不限轮数」时的硬上限 —— 没人盯着的时候，别让它一直烧下去。</summary>
+    public const int MaxAutoRounds = 20;
 
     private readonly ModelClient _client;
     private readonly UsageStore? _usage;
@@ -62,8 +65,12 @@ public sealed class ModelDebate
     /// </summary>
     /// <param name="yourVerdict">用户自己的判断（"违规" / "不违规" / null = 不确定）。</param>
     /// <param name="checkpoint">
-    /// 每跑完 <see cref="RoundsPerBatch"/> 轮还没通过时调用一次；返回是否继续（以及用户补充的信息）。
+    /// 每跑完 <see cref="RoundsPerBatch"/> 轮还没通过时调用一次；返回是否继续。
     /// 传 null 就只跑一批。
+    /// </param>
+    /// <param name="drainNotes">
+    /// 取走用户在这期间发来的话。每次要开口问模型之前都取一次 —— 这样用户随时能插话，
+    /// 下一次说话的那一方就看得见。
     /// </param>
     public async Task<DebateOutcome?> RunAsync(
         ModelProvider a,
@@ -74,7 +81,10 @@ public sealed class ModelDebate
         string? yourReason,
         Action<DebateLine> say,
         CancellationToken token,
-        Func<int, Task<DebateCheckpoint>>? checkpoint = null)
+        Func<int, Task<DebateCheckpoint>>? checkpoint = null,
+        Func<IReadOnlyList<string>>? drainNotes = null,
+        int roundsPerBatch = RoundsPerBatch,
+        bool unlimited = false)
     {
         var page = Page(snapshot);
         var goal = ParseVerdict(yourVerdict);
@@ -152,11 +162,20 @@ public sealed class ModelDebate
         var passed = false;
         var stoppedByUser = false;
 
-        // 一批 RoundsPerBatch 轮；没过就停下来问用户要不要再来一批（顺便可以补充信息）。
+        // 用户随时能发一句话；每次要开口问模型之前取一次，下一个说话的那一方就看得见。
+        void TakeNotes() => Collect(drainNotes, notes);
+
+        var batchSize = Math.Max(1, roundsPerBatch);
+
+        // 一批 batchSize 轮；没过就停下来问用户要不要再来一批。
+        // 选了「不限」就不停（最多跑到 MaxAutoRounds，防止跑飞）。
         while (!passed && !token.IsCancellationRequested)
         {
-            for (var i = 0; i < RoundsPerBatch && !passed && !token.IsCancellationRequested; i++)
+            for (var i = 0; i < batchSize && !passed && !token.IsCancellationRequested; i++)
             {
+                if (unlimited && rounds >= MaxAutoRounds)
+                    break;
+
                 rounds++;
                 var round = rounds;
 
@@ -168,6 +187,8 @@ public sealed class ModelDebate
                         $"第 {round} 轮：「{correct.Name}」先说它漏在哪，再让「{wrong.Name}」答辩，"
                         + "两边把话说完，最后看重新判这一页的结果。", IsSystem: true));
 
+                    TakeNotes();
+
                     lastDiagnosis = await AskAsync(
                         correct,
                         DiagnosisPrompt(correct, correctResult!, wrong, wrongResult, instruction, page, mark,
@@ -175,6 +196,8 @@ public sealed class ModelDebate
                         token).ConfigureAwait(false);
 
                     say(new DebateLine(correct.Name, lastDiagnosis ?? "(没答上来)"));
+
+                    TakeNotes();
 
                     var fix = await AskAsync(
                         wrong,
@@ -192,6 +215,8 @@ public sealed class ModelDebate
                         say(new DebateLine("系统",
                             $"「{wrong.Name}」没给出可用的补丁，改让「{correct.Name}」写一条。", IsSystem: true));
 
+                        TakeNotes();
+
                         fix = await AskAsync(
                             correct,
                             FixPrompt(correct, correctResult!, wrong, wrongResult, instruction, page, mark,
@@ -205,6 +230,8 @@ public sealed class ModelDebate
                     else
                     {
                         // 让它把话说完：判对的一方要正面回应自辩，而不是各说各话。
+                        TakeNotes();
+
                         var reply = await AskAsync(
                             correct,
                             ReplyPrompt(correct, wrong, lastDiagnosis, fix, notes),
@@ -224,9 +251,13 @@ public sealed class ModelDebate
                         $"第 {round} 轮：两家各写一条补丁，然后把补丁加进禁令、重新判这一页来验证。",
                         IsSystem: true));
 
+                    TakeNotes();
+
                     var pa = await AskAsync(a, ProposalPrompt(a, b, a1, b1, current, page, goal, failure, notes), token)
                         .ConfigureAwait(false);
                     say(new DebateLine(a.Name, pa ?? "(没答上来)"));
+
+                    TakeNotes();
 
                     var pb = await AskAsync(b, ProposalPrompt(b, a, b1, a1, current, page, goal, failure, notes), token)
                         .ConfigureAwait(false);
@@ -308,12 +339,32 @@ public sealed class ModelDebate
             say(new DebateLine("系统", failure, IsSystem: true));
             }
 
-            if (passed || token.IsCancellationRequested || checkpoint is null)
+            if (passed || token.IsCancellationRequested)
+                break;
+
+            if (unlimited)
+            {
+                if (rounds >= MaxAutoRounds)
+                {
+                    say(new DebateLine("系统",
+                        $"已经自动跑了 {rounds} 轮，还没通过 —— 先停在这里（防止一直烧下去）。",
+                        IsSystem: true));
+
+                    break;
+                }
+
+                say(new DebateLine("系统",
+                    $"已经跑了 {rounds} 轮，还没通过；这次选了「不限」，继续往下跑。", IsSystem: true));
+
+                continue;
+            }
+
+            if (checkpoint is null)
                 break;
 
             say(new DebateLine("系统",
-                $"已经跑了 {rounds} 轮，还没通过 —— 停下来等你决定：可以再跑 {RoundsPerBatch} 轮，"
-                + "也可以顺便补充点信息给两个模型。", IsSystem: true));
+                $"已经跑了 {rounds} 轮，还没通过 —— 等你决定：再跑 {batchSize} 轮，还是收工？"
+                + "想补充信息，直接在下面的输入框里发。", IsSystem: true));
 
             var answer = await checkpoint(rounds).ConfigureAwait(false);
 
@@ -636,6 +687,19 @@ public sealed class ModelDebate
             - 写通用规则：不写网址、不写这一页的标题、不写这条新闻/这个商品的名字。
             - 不评价对方、不评价禁令是否自相矛盾、不复述禁令原文。
             """;
+    }
+
+    /// <summary>把用户在这期间发来的话取走，追加进后面的提示词。</summary>
+    private static void Collect(Func<IReadOnlyList<string>>? drain, List<string> notes)
+    {
+        if (drain is null)
+            return;
+
+        foreach (var text in drain())
+        {
+            if (!string.IsNullOrWhiteSpace(text))
+                notes.Add(text.Trim());
+        }
     }
 
     /// <summary>上一轮双方说过的话 —— 新一轮要接着讲，不能从头再来。</summary>
