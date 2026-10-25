@@ -129,9 +129,20 @@ public static class ConfigValidator
         if (!string.IsNullOrWhiteSpace(config.ActiveModelId) && !modelIds.Contains(config.ActiveModelId))
             issues.Add(Error("ActiveModelId", $"指向了一个不存在的服务商：{config.ActiveModelId}"));
 
+        foreach (var id in config.ModelChain)
+        {
+            if (string.IsNullOrWhiteSpace(id))
+                issues.Add(Warning("ModelChain", "判断链里有一项是空的（会被跳过）"));
+            else if (!modelIds.Contains(id))
+                issues.Add(Error("ModelChain", $"判断链里指向了一个不存在的服务商：{id}（这一项会被跳过）"));
+        }
+
         // 不是错误：先写规则、再配服务商，这个顺序很自然。但不提醒的话，那条规则会
         // **什么都不做**，而界面上看不出任何区别 —— 和"配好了但没命中"长得一模一样。
-        if (string.IsNullOrWhiteSpace(config.ActiveModelId)
+        var supervising = config.ModelChain.Any(id => !string.IsNullOrWhiteSpace(id))
+                          || !string.IsNullOrWhiteSpace(config.ActiveModelId);
+
+        if (!supervising
             && config.Targets.Any(t => t.Rules.Any(r => r.Match.Type == MatchKind.Model)))
         {
             issues.Add(Warning("Models",

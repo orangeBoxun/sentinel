@@ -415,7 +415,7 @@ public partial class MainWindow : Window
         ModelEndpointBox.Text, ModelListEndpointBox.Text, ModelAutoCompleteCheck.IsChecked,
         ModelCodePicker.Text,
         (ModelFormatBox.SelectedItem as Choice<ApiFormat>)?.Value,
-        ModelActiveCheck.IsChecked,
+        ModelActiveCheck.IsChecked, ModelOrderBox.Text,
         CurrentKey());
 
     // ------------------------------------------------------------------ 保险箱
@@ -1971,12 +1971,27 @@ public partial class MainWindow : Window
             ModelStatusText.Text += $"\n⚠ {issue}";
     }
 
+    /// <summary>现在参与判断的服务商，按顺序。老配置（没有链）就是那一个 ActiveModelId。</summary>
+    private List<string> ModelChain()
+    {
+        var config = _state.Config;
+
+        if (config.ModelChain is { Count: > 0 })
+            return config.ModelChain.ToList();
+
+        return string.IsNullOrWhiteSpace(config.ActiveModelId)
+            ? new List<string>()
+            : new List<string> { config.ActiveModelId };
+    }
+
     private void RefreshModelList()
     {
         // 每次重绑都重新生成行对象：一行要显示的“使用中”来自
         // config.ActiveModelId，而它在别处（保存、删掉服务商）会变。
+        var chain = ModelChain();
+
         ModelList.ItemsSource = _state.Config.Models
-            .Select(m => new ModelRow(m, m.Id == _state.Config.ActiveModelId))
+            .Select(m => new ModelRow(m, chain.Contains(m.Id)))
             .ToList();
 
         ModelEmptyHint.Visibility = _state.Config.Models.Count == 0
@@ -2089,7 +2104,11 @@ public partial class MainWindow : Window
             : new[] { provider.Model };
         ModelCodePicker.SelectedIndex = string.IsNullOrWhiteSpace(provider.Model) ? -1 : 0;
 
-        ModelActiveCheck.IsChecked = provider.Id == _state.Config.ActiveModelId;
+        var chain = ModelChain();
+        var position = chain.IndexOf(provider.Id);
+
+        ModelActiveCheck.IsChecked = position >= 0;
+        ModelOrderBox.Text = (position >= 0 ? position + 1 : chain.Count + 1).ToString();
         ModelKeySecret.Password = provider.ApiKey;
         ModelKeyBox.Text = provider.ApiKey;
         SetKeyVisible(false);
@@ -2403,21 +2422,25 @@ public partial class MainWindow : Window
         if (ModelFormatBox.SelectedItem is Choice<ApiFormat> format)
             _selectedModel.Format = format.Value;
 
-        // 勾上它 = 启用这个服务商（启用是唯一的，等于把别的都取消启用）。
+        // 勾上它 = 这个服务商参与判断；「判断顺序」决定先问谁。
         //
-        // **但不能反过来说：没勾 ≠ 关掉模型监督。** 这里原来写的是"没勾就把 ActiveModelId
-        // 清空"，而新建的服务商默认就是不勾的 —— 于是"添加一条管道"这个动作被记成了
-        // "关掉了模型监督"，判定器一看"从开到关"就是放宽，于是要令牌。人只是在加管道，
-        // 什么都没想放宽。
+        // **但不能反过来说：没勾 ≠ 关掉模型监督。** 原来写的是"没勾就把 ActiveModelId 清空"，
+        // 而新建的服务商默认不勾 —— 于是"添加一条管道"被记成了"关掉了模型监督"，要令牌。
+        // 人只是在加管道，什么都没想放宽。
+        //
+        // 现在维护的是**链**：从链里拿掉一个模型才算放宽，链空了才等于停掉监督。
+        var chain = ModelChain().Where(id => id != _selectedModel.Id).ToList();
+
         if (ModelActiveCheck.IsChecked == true)
         {
-            _state.Config.ActiveModelId = _selectedModel.Id;
+            var order = ParseInt(ModelOrderBox.Text, chain.Count + 1, 1, 99);
+            chain.Insert(Math.Clamp(order - 1, 0, chain.Count), _selectedModel.Id);
         }
-        else if (_selectedModel.Id == _state.Config.ActiveModelId)
-        {
-            // 取消勾选的正是当前启用的那一个 —— 这才真叫"关掉模型监督"，要令牌是应该的。
-            _state.Config.ActiveModelId = null;
-        }
+
+        _state.Config.ModelChain = chain;
+
+        // ActiveModelId 跟着链的首位：界面显示、以及老版本读这份配置时都用它。
+        _state.Config.ActiveModelId = chain.FirstOrDefault();
 
         if (isNew)
             _state.Config.Models.Add(_selectedModel);
@@ -2995,16 +3018,22 @@ public partial class MainWindow : Window
 
         var window = matches.FirstOrDefault(w => w.IsForeground) ?? matches[0];
         report.Add($"   {matches.Count} 个窗口匹配，挑了这个：PID {window.ProcessId}「{window.MainWindowTitle}」");
-        report.Add($"   前台={Yes(window.IsForeground)}  最小化={Yes(window.IsMinimized)}");
+        report.Add($"   前台={Yes(window.IsForeground)}  露在屏幕上={Yes(window.IsExposed)}  最小化={Yes(window.IsMinimized)}");
 
         if (window.IsMinimized)
             steps.Add("挑中的那个窗口是最小化的 —— 最小化的不读也不判");
 
-        if (!window.IsForeground)
+        if (!window.IsExposed)
         {
-            report.Add("   ⚠ 它现在不在前台。监控只看前台窗口（后台窗口的内容会自己变，每变一次就是一次"
-                       + "要花钱的判定），所以现在这个状态不会被判。把它切到最前面再测一次。");
-            steps.Add("挑中的那个窗口不在前台 —— 监控现在不会看它");
+            report.Add("   ⚠ 它现在**没露在屏幕上**（被别的窗口完全盖住，或者刚被最小化）。"
+                       + "监控的判据是「露在屏幕上就得管」，一点都看不见的不读 —— "
+                       + "把手头的窗口挪开一点，让它露出来，再测一次。");
+            steps.Add("挑中的那个窗口没露在屏幕上 —— 监控现在不会看它");
+        }
+        else if (!window.IsForeground)
+        {
+            report.Add("   · 它不在前台，但**露在屏幕上** —— 监控照样会判它"
+                       + "（每轮最多读 4 个，前台优先，其余按最久没读过的轮着来，最坏等几轮）。");
         }
 
         // ---- 2. 读内容

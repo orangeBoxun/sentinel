@@ -83,14 +83,40 @@ public static class ConfigRelaxation
     /// </summary>
     private static ChangeDirection CompareModelSupervision(AppConfig previous, AppConfig current)
     {
-        var before = !string.IsNullOrWhiteSpace(previous.ActiveModelId);
-        var after = !string.IsNullOrWhiteSpace(current.ActiveModelId);
+        var before = SupervisingModels(previous);
+        var after = SupervisingModels(current);
 
-        return before == after
-            ? ChangeDirection.Neutral
-            : after
-                ? ChangeDirection.Tightening    // 开起来了
-                : ChangeDirection.Relaxing;     // 关掉了
+        // 一样多、而且换的是谁都不算：换服务商只是"用哪条管道"。
+        if (before.SetEquals(after))
+            return ChangeDirection.Neutral;
+
+        // 判断链是"任一模型说违规就拦"，所以**链上少一个模型就是放宽**
+        // （那个模型本来会拦下的东西，现在没人拦了）；多一个是收紧。
+        if (after.Count < before.Count)
+            return ChangeDirection.Relaxing;
+
+        if (after.Count > before.Count)
+            return ChangeDirection.Tightening;
+
+        // 数量没变、换的是人选：和"换服务商不算"同一个道理。
+        return ChangeDirection.Neutral;
+    }
+
+    /// <summary>
+    /// 现在到底有几个模型在参与判断：有链就看链，没链就看单个 ActiveModelId（老配置）。
+    /// </summary>
+    private static HashSet<string> SupervisingModels(AppConfig config)
+    {
+        if (config.ModelChain is { Count: > 0 })
+        {
+            return config.ModelChain
+                .Where(id => !string.IsNullOrWhiteSpace(id))
+                .ToHashSet(StringComparer.Ordinal);
+        }
+
+        return string.IsNullOrWhiteSpace(config.ActiveModelId)
+            ? new HashSet<string>(StringComparer.Ordinal)
+            : new HashSet<string>(StringComparer.Ordinal) { config.ActiveModelId };
     }
 
     /// <summary>
@@ -157,6 +183,9 @@ public static class ConfigRelaxation
 
         if (Widens(c => c.ActiveModelId = current.ActiveModelId))
             whys.Add("关掉了模型监督");
+
+        if (Widens(c => c.ModelChain = current.ModelChain))
+            whys.Add("判断链上少了一个模型 —— 它本来会拦下的东西，现在没人拦了");
 
         // ---- 目标
         var beforeTargets = ById(previous.Targets, t => t.Id);

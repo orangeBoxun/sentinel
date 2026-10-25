@@ -122,14 +122,17 @@ internal static class ModelCheck
         Console.WriteLine($"  编辑页   : {editor.Visibility}（Collapsed = 已经回到列表）");
         Console.WriteLine($"  列表行   : {string.Join(" / ", ItemsOf(list).Select(Describe))}");
         Console.WriteLine($"  磁盘上是 : {string.Join(" / ", OnDisk(configPath).Models.Select(m => $"{m.Name}|{m.Model}|{m.Endpoint}"))}");
-        Console.WriteLine($"  启用的   : {OnDisk(configPath).ActiveModelId}");
+        Console.WriteLine($"  判断链   : {string.Join(" → ", OnDisk(configPath).ModelChain)}（首位 {OnDisk(configPath).ActiveModelId}）");
 
         var onDisk = OnDisk(configPath);
         var saved = onDisk.Models.FirstOrDefault(m => m.Name == "示例中转");
 
+        // 勾"参与判断"= 加入判断链（排在后面），不再抢唯一的位置：
+        // ActiveModelId 跟着链的首位走，所以还是原来那个。
         ok &= editor.Visibility == Visibility.Collapsed
               && saved is { Model: "some-model" }
-              && onDisk.ActiveModelId == saved!.Id;
+              && onDisk.ModelChain.SequenceEqual(new[] { "m1", saved!.Id })
+              && onDisk.ActiveModelId == "m1";
 
         // ---- 五、编辑已有的那个：可编辑下拉框里的模型名要能看见
         //         （这类框有个坑：先填 Text 再把 ItemsSource 清空，Text 会被一起抹掉）

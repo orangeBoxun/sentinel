@@ -150,15 +150,16 @@ public sealed class ModelSupervisor : IModelSupervisor
     public ModelVerdict Lookup(string ruleId, ContentSnapshot snapshot)
     {
         var now = DateTimeOffset.Now;
+        var signature = ChainSignature();
 
         lock (_gate)
         {
             // 一模一样的这份内容判过 —— 直接用，这种情况最常见（页面没变）。
-            if (_verdicts.TryGetValue(Key(ruleId, ContentFingerprint.Of(snapshot)), out var known))
+            if (_verdicts.TryGetValue(Key(signature, ruleId, ContentFingerprint.Of(snapshot)), out var known))
                 return known;
 
             // 这份内容没判过，但**同一个地址**刚判过：正文在动而已，接着用上一次的结论。
-            if (RecentForAddress(ruleId, snapshot.Url, now) is { } recent)
+            if (RecentForAddress(signature, ruleId, snapshot.Url, now) is { } recent)
                 return recent;
 
             return ModelVerdict.Unknown;
@@ -178,16 +179,17 @@ public sealed class ModelSupervisor : IModelSupervisor
     public VerdictProvenance Explain(string ruleId, ContentSnapshot snapshot)
     {
         var now = DateTimeOffset.Now;
+        var signature = ChainSignature();
 
         lock (_gate)
         {
-            if (_verdicts.TryGetValue(Key(ruleId, ContentFingerprint.Of(snapshot)), out var known))
+            if (_verdicts.TryGetValue(Key(signature, ruleId, ContentFingerprint.Of(snapshot)), out var known))
                 return new VerdictProvenance(known, "这份内容判过，直接沿用（没有再问一次）", null);
 
             var url = snapshot.Url;
 
             if (!string.IsNullOrEmpty(url)
-                && _byAddress.TryGetValue(AddressKey(ruleId, url), out var recent)
+                && _byAddress.TryGetValue(AddressKey(signature, ruleId, url), out var recent)
                 && now - recent.At <= VerdictLifetime)
             {
                 return new VerdictProvenance(
@@ -201,12 +203,12 @@ public sealed class ModelSupervisor : IModelSupervisor
     }
 
     /// <summary>同一个地址上、还没过期的那个判定。</summary>
-    private ModelVerdict? RecentForAddress(string ruleId, string? url, DateTimeOffset now)
+    private ModelVerdict? RecentForAddress(string signature, string ruleId, string? url, DateTimeOffset now)
     {
         if (string.IsNullOrEmpty(url))
             return null;
 
-        if (!_byAddress.TryGetValue(AddressKey(ruleId, url), out var recent))
+        if (!_byAddress.TryGetValue(AddressKey(signature, ruleId, url), out var recent))
             return null;
 
         return now - recent.At <= VerdictLifetime ? recent.Verdict : null;
@@ -240,9 +242,7 @@ public sealed class ModelSupervisor : IModelSupervisor
         if (BlockingIssue is null && BlockingKind == ModelTroubleKind.None)
             return true;   // 本来就没停摆，不用探
 
-        var provider = ActiveProvider();
-
-        if (provider is null)
+        if (Chain().Count == 0)
             return false;
 
         // 网断着就不去问了 —— 现在去问只会挂满一分钟，而它必然失败。
@@ -254,24 +254,28 @@ public sealed class ModelSupervisor : IModelSupervisor
 
         try
         {
-            var result = await _client
-                .JudgeAsync(provider, ProbeInstruction(), ProbeSnapshot(), CancellationToken.None)
-                .ConfigureAwait(false);
-
-            var online = await OnlineIfItMattersAsync(result.Outcome, provider.Endpoint).ConfigureAwait(false);
-            var trouble = ModelTrouble.Classify(result.Outcome, provider.Endpoint, online);
+            // 探的是**整条链**：只要链上有一个模型答得上来，监督就是活的。
+            var run = await RunChainAsync(ProbeInstruction(), ProbeSnapshot()).ConfigureAwait(false);
 
             // 没拿到判定：不能算好了。**只有真拿到判定才算好了** —— 服务端 5xx、回来的东西
             // 看不懂、连不上，都只说明"这次没学到东西"，把它们读成"通了"就等于提醒因为一次
             // 没有信息的探测停了，而真实判定照样在失败。
-            if (result.Outcome != ModelCallOutcome.Answered)
+            if (run.Answer is not { Outcome: ModelCallOutcome.Answered })
             {
-                lock (_gate)
+                if (run.Failure is { } failure)
                 {
-                    BlockingKind = trouble;
-                    BlockingIssue = trouble == ModelTroubleKind.Offline
-                        ? OfflineIssue
-                        : result.Message ?? "模型监督现在拿不到判定。";
+                    var online = await OnlineIfItMattersAsync(failure.Outcome, run.FailedAt?.Endpoint)
+                        .ConfigureAwait(false);
+
+                    var trouble = ModelTrouble.Classify(failure.Outcome, run.FailedAt?.Endpoint, online);
+
+                    lock (_gate)
+                    {
+                        BlockingKind = trouble;
+                        BlockingIssue = trouble == ModelTroubleKind.Offline
+                            ? OfflineIssue
+                            : failure.Message ?? "模型监督现在拿不到判定。";
+                    }
                 }
 
                 return false;   // 接着（该吵的时候）提醒
@@ -372,7 +376,8 @@ public sealed class ModelSupervisor : IModelSupervisor
             return;
 
         var fingerprint = ContentFingerprint.Of(snapshot);
-        var key = Key(ruleId, fingerprint);
+        var signature = ChainSignature();
+        var key = Key(signature, ruleId, fingerprint);
         var now = DateTimeOffset.Now;
 
         lock (_gate)
@@ -382,7 +387,7 @@ public sealed class ModelSupervisor : IModelSupervisor
 
             // 同一个地址上刚判过 —— 正文在动而已。引擎那边通常不会走到这里（查得到就不会问），
             // 这一道是给"查和问之间刚好判完"那种时序留的。
-            if (RecentForAddress(ruleId, snapshot.Url, now) is not null)
+            if (RecentForAddress(signature, ruleId, snapshot.Url, now) is not null)
                 return;
 
             if (_lastAttempt.TryGetValue(key, out var last) && now - last < RetryAfterNoAnswer)
@@ -396,17 +401,17 @@ public sealed class ModelSupervisor : IModelSupervisor
             _inFlight.Add(key);
         }
 
-        _ = Task.Run(() => JudgeAsync(key, ruleId, instruction, snapshot));
+        _ = Task.Run(() => JudgeAsync(signature, key, ruleId, instruction, snapshot));
     }
 
-    private async Task JudgeAsync(string key, string ruleId, string instruction, ContentSnapshot snapshot)
+    private async Task JudgeAsync(string signature, string key, string ruleId, string instruction, ContentSnapshot snapshot)
     {
         try
         {
-            // 现取：用户在界面上改完服务商，下一次判定就该用改完的那个。
-            var provider = ActiveProvider();
+            // 现取：用户在界面上改完服务商，下一次判定就该用改完的那条链。
+            var chain = Chain();
 
-            if (provider is null)
+            if (chain.Count == 0)
             {
                 // 没启用任何服务商 —— 模型监督等于关着。规则引擎会因为查不到判定而放行，
                 // 这正是"关掉监督"该有的样子。
@@ -415,47 +420,49 @@ public sealed class ModelSupervisor : IModelSupervisor
 
             // 没网就别发这一次了：它要么立刻失败、要么挂满 60 秒，两种都白等，后果一样。
             // 这条判断自己有 30 秒缓存，所以不是每个页面都探一次。
-            if (!ModelTrouble.IsLocal(provider.Endpoint)
-                && !await _connectivity.IsStableAsync().ConfigureAwait(false))
+            // （链上有本机/内网的服务就不看公网通不通 —— 那一个不需要公网。）
+            var needsInternet = chain.Any(p => !ModelTrouble.IsLocal(p.Endpoint));
+
+            if (needsInternet && !await _connectivity.IsStableAsync().ConfigureAwait(false))
             {
                 BlockingKind = ModelTroubleKind.Offline;
                 BlockingIssue = OfflineIssue;
                 return;
             }
 
-            var result = await _client.JudgeAsync(provider, instruction, snapshot, CancellationToken.None)
+            var run = await RunChainAsync(instruction, snapshot).ConfigureAwait(false);
+
+            if (run.Answer is { Outcome: ModelCallOutcome.Answered } answer)
+            {
+                BlockingIssue = null;
+                BlockingKind = ModelTroubleKind.None;
+                LastAnswered = DateTimeOffset.Now;
+                Store(signature, key, ruleId, snapshot.Url, answer.Violates
+                    ? new ModelVerdict(ModelVerdictKind.Blocked, answer.Reason)
+                    : ModelVerdict.Allowed);
+                return;
+            }
+
+            if (run.Failure is not { } failure)
+                return;
+
+            // **拿不到判定，就是"没人判了"** —— 限流、欠费、5xx、公网连不上、太慢、
+            // 本地没起来，全都是同一件事。分类只决定提醒里那句话怎么说（见 ModelTrouble），
+            // 节奏是同一个（见 ModelAlertPacing）。
+            //
+            // 原来只吵"本地没起来"和"太慢"两类，另外几类一个不吵、一个五分钟才吵一次 ——
+            // 而用户真正会碰到的是免费在线模型被限流：网好好的、网站打得开、照样能刷，
+            // 只是没人判了。那种情况下五分钟一次的提醒起不到任何作用。
+            //
+            // 反过来的那一头也要区分：**整台机器没网**的时候不该吵（网站自己也打不开），
+            // 所以要先问一句"现在有网吗"（见 Connectivity）。
+            var online = await OnlineIfItMattersAsync(failure.Outcome, run.FailedAt?.Endpoint)
                 .ConfigureAwait(false);
 
-            switch (result.Outcome)
-            {
-                case ModelCallOutcome.Answered:
-                    BlockingIssue = null;
-                    BlockingKind = ModelTroubleKind.None;
-                    LastAnswered = DateTimeOffset.Now;
-                    Store(key, ruleId, snapshot.Url, result.Violates
-                        ? new ModelVerdict(ModelVerdictKind.Blocked, result.Reason)
-                        : ModelVerdict.Allowed);
-                    break;
-
-                default:
-                    // **拿不到判定，就是"没人判了"** —— 限流、欠费、5xx、公网连不上、太慢、
-                    // 本地没起来，全都是同一件事。分类只决定提醒里那句话怎么说（见 ModelTrouble），
-                    // 节奏是同一个（见 ModelAlertPacing）。
-                    //
-                    // 原来只吵"本地没起来"和"太慢"两类，另外几类一个不吵、一个五分钟才吵一次 ——
-                    // 而用户真正会碰到的是免费在线模型被限流：网好好的、网站打得开、照样能刷，
-                    // 只是没人判了。那种情况下五分钟一次的提醒起不到任何作用。
-                    //
-                    // 反过来的那一头也要区分：**整台机器没网**的时候不该吵（网站自己也打不开），
-                    // 所以要先问一句"现在有网吗"（见 Connectivity）。
-                    var online = await OnlineIfItMattersAsync(result.Outcome, provider.Endpoint).ConfigureAwait(false);
-
-                    BlockingKind = ModelTrouble.Classify(result.Outcome, provider.Endpoint, online);
-                    BlockingIssue = BlockingKind == ModelTroubleKind.Offline
-                        ? OfflineIssue
-                        : result.Message ?? "模型监督现在拿不到判定。";
-                    break;
-            }
+            BlockingKind = ModelTrouble.Classify(failure.Outcome, run.FailedAt?.Endpoint, online);
+            BlockingIssue = BlockingKind == ModelTroubleKind.Offline
+                ? OfflineIssue
+                : failure.Message ?? "模型监督现在拿不到判定。";
         }
         catch
         {
@@ -498,18 +505,110 @@ public sealed class ModelSupervisor : IModelSupervisor
         return true;
     }
 
-    private ModelProvider? ActiveProvider()
+    /// <summary>
+    /// 按顺序排好的判断链。空 = 模型监督关着（不是"回退到第一个"）。
+    /// </summary>
+    private IReadOnlyList<ModelProvider> Chain()
     {
         var config = _config();
-        var id = config.ActiveModelId;
+        var providers = new List<ModelProvider>();
 
-        if (string.IsNullOrWhiteSpace(id))
-            return null;   // 没启用 = 没在监督。这是"停用"的定义，不是回退到第一个。
+        if (config.ModelChain is { Count: > 0 })
+        {
+            // 链里指向不存在的服务商会被跳过 —— 删掉一个服务商不该让整条链失效。
+            foreach (var id in config.ModelChain)
+            {
+                if (config.Models.FirstOrDefault(m => m.Id == id) is { } provider)
+                    providers.Add(provider);
+            }
 
-        return config.Models.FirstOrDefault(m => m.Id == id);
+            return providers;
+        }
+
+        // 老配置（没有链）：就是一个模型。
+        if (!string.IsNullOrWhiteSpace(config.ActiveModelId)
+            && config.Models.FirstOrDefault(m => m.Id == config.ActiveModelId) is { } single)
+        {
+            providers.Add(single);
+        }
+
+        return providers;
     }
 
-    private void Store(string key, string ruleId, string? url, ModelVerdict verdict)
+    /// <summary>
+    /// 链的"身份"：换了模型、地址、顺序都会变，它参与缓存键。
+    ///
+    /// <para>
+    /// 没有这一层会出现一个很难查的现象：一个页面被小模型判过"不违规"之后，那份结论会一直
+    /// 缓存着 —— 你换成更准的模型也没用，因为根本不会再去问，除非页面内容自己变了
+    /// （刷新一次）。而"换模型"本来就该让旧结论作废。
+    /// </para>
+    /// </summary>
+    private string ChainSignature() =>
+        string.Join(">", Chain().Select(p => $"{p.Id}:{p.Model}:{p.Endpoint}"));
+
+    /// <summary>跑一遍链的结果：拿到了哪个回答，或者卡在哪儿了。</summary>
+    private sealed record ChainRun(
+        ModelCallResult? Answer, ModelProvider? AnsweredBy, ModelProvider? FailedAt, ModelCallResult? Failure);
+
+    /// <summary>
+    /// 按链一路问下去，**任一模型说违规就停在那里**；说不违规就交给下一个；
+    /// 全都说不违规才算放行。全都答不上来才算失败（带第一个失败的原因）。
+    /// </summary>
+    private async Task<ChainRun> RunChainAsync(string instruction, ContentSnapshot snapshot)
+    {
+        var answered = 0;
+        ModelCallResult? answer = null;
+        ModelProvider? answeredBy = null;
+        ModelProvider? failedAt = null;
+        ModelCallResult? failure = null;
+
+        foreach (var provider in Chain())
+        {
+            if (string.IsNullOrWhiteSpace(provider.Endpoint) || string.IsNullOrWhiteSpace(provider.Model))
+            {
+                failedAt ??= provider;
+                failure ??= new ModelCallResult(ModelCallOutcome.NeedsAttention,
+                    Message: "这个服务商还没填地址和模型。");
+                continue;
+            }
+
+            ModelCallResult result;
+
+            try
+            {
+                result = await _client
+                    .JudgeAsync(provider, instruction, snapshot, CancellationToken.None)
+                    .ConfigureAwait(false);
+            }
+            catch
+            {
+                continue;   // 抛异常 = 它这次没意见
+            }
+
+            if (result.Outcome == ModelCallOutcome.Answered)
+            {
+                answered++;
+                answer = result;
+                answeredBy = provider;
+
+                if (result.Violates)
+                    break;   // 有人说了违规 —— 后面的模型不用再花钱
+            }
+            else
+            {
+                // 失败只算"它没意见"，继续问下一个：链上有别的模型能判，监督就还活着。
+                failedAt ??= provider;
+                failure ??= result;
+            }
+        }
+
+        return answered > 0
+            ? new ChainRun(answer, answeredBy, null, null)
+            : new ChainRun(null, null, failedAt, failure);
+    }
+
+    private void Store(string signature, string key, string ruleId, string? url, ModelVerdict verdict)
     {
         var now = DateTimeOffset.Now;
 
@@ -535,7 +634,7 @@ public sealed class ModelSupervisor : IModelSupervisor
             if (string.IsNullOrEmpty(url))
                 return;
 
-            var addressKey = AddressKey(ruleId, url);
+            var addressKey = AddressKey(signature, ruleId, url);
 
             if (!_byAddress.ContainsKey(addressKey))
                 _addressOrder.Enqueue(addressKey);
@@ -547,9 +646,11 @@ public sealed class ModelSupervisor : IModelSupervisor
         }
     }
 
-    private static string Key(string ruleId, string fingerprint) => ruleId + "\u0000" + fingerprint;
+    private static string Key(string signature, string ruleId, string fingerprint) =>
+        signature + " " + ruleId + " " + fingerprint;
 
-    private static string AddressKey(string ruleId, string url) => ruleId + "\u0000url\u0000" + url;
+    private static string AddressKey(string signature, string ruleId, string url) =>
+        signature + " " + ruleId + " url " + url;
 }
 
 /// <summary>

@@ -177,6 +177,25 @@ public sealed class AppConfig
     /// <summary>当前启用的服务商。换一个不算放宽 —— 那是配置，不是放宽限制。</summary>
     public string? ActiveModelId { get; set; }
 
+    /// <summary>
+    /// 判断的责任链：按顺序排的服务商 id，**任一模型说违规就算违规**，全都说不违规才放行。
+    ///
+    /// <para>
+    /// 为什么要有它：小模型遇到模糊页面倾向"不违规"（尤其禁令里写着"要有确切把握才拦"的时候），
+    /// 大模型判得准、却贵。便宜的放前面、贵的放后面 —— 便宜的说违规就地拦下，只有它说不违规时
+    /// 才去问贵的。省钱的同时，判错的代价只落在"便宜的那个多拦了"这一头。
+    /// </para>
+    /// <para>
+    /// 空 = 退回单模型行为（用 <see cref="ActiveModelId"/>）。链里指向不存在的服务商会被跳过，
+    /// 所以删掉一个服务商不会让整条链失效。
+    /// </para>
+    /// <para>
+    /// 它也是**判定缓存的一部分**：换链 / 换模型 / 改地址之后，旧结论不能再沿用 ——
+    /// 否则"换成更准的模型"这件事永远不会生效，除非页面内容自己变了。
+    /// </para>
+    /// </summary>
+    public List<string> ModelChain { get; set; } = new();
+
     public ProtectionConfig Protection { get; set; } = new();
     public LoggingConfig Logging { get; set; } = new();
     public UiConfig Ui { get; set; } = new();

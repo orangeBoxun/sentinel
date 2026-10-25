@@ -746,9 +746,14 @@
                                         </StackPanel>
                                     </WrapPanel>
 
-                                    <CheckBox x:Name="ModelActiveCheck" Content="启用这个服务商（模型监督走它）" />
+                                    <CheckBox x:Name="ModelActiveCheck" Content="参与判断（模型监督走它）" />
+                                    <WrapPanel Margin="0,10,0,0">
+                                        <TextBlock Text="判断顺序" VerticalAlignment="Center" Foreground="{StaticResource TextSecondary}" />
+                                        <TextBox x:Name="ModelOrderBox" Style="{StaticResource NumericBox}" Margin="8,0,6,0" />
+                                        <TextBlock Text="（越小越先问）" VerticalAlignment="Center" Foreground="{StaticResource TextSecondary}" />
+                                    </WrapPanel>
                                     <TextBlock Style="{StaticResource Hint}" Margin="0,8,0,0"
-                                               Text="同一时间只有一个能用。取消启用等于停掉模型监督 —— 那算放宽，保护开着的时候要令牌。" />
+                                               Text="可以同时勾多个：按顺序挨个问，任一模型说违规就拦，全都说不违规才放行。便宜的小模型放前面、贵的放后面 —— 小模型先拦下的就不再问贵的。一个都不勾等于停掉模型监督，那算放宽。" />
                                 </StackPanel>
                             </Border>
 

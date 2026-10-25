@@ -623,6 +623,144 @@ public class ModelTests
         Assert.Equal(ModelTroubleKind.Offline, supervisor.BlockingKind);
     }
 
+    // ------------------------------------------------------------------ 责任链
+
+    /// <summary>按请求体里的模型名回不同的判定 —— 用来模拟"便宜的说放行、贵的说违规"。</summary>
+    private sealed class PerModelHandler : HttpMessageHandler
+    {
+        private readonly Dictionary<string, bool> _violates;
+
+        public PerModelHandler(Dictionary<string, bool> violates) => _violates = violates;
+
+        public List<string> Asked { get; } = new();
+
+        protected override async Task<HttpResponseMessage> SendAsync(
+            HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            var body = request.Content is null ? "" : await request.Content.ReadAsStringAsync(cancellationToken);
+
+            var model = "";
+            try
+            {
+                model = System.Text.Json.JsonDocument.Parse(body).RootElement.GetProperty("model").GetString() ?? "";
+            }
+            catch
+            {
+                // 读不出模型名就按"不违规"回，测试里不会走到。
+            }
+
+            Asked.Add(model);
+
+            var violates = _violates.TryGetValue(model, out var flag) && flag;
+            var answer = violates ? "[true, \"违规\"]" : "[false, \"\"]";
+
+            var json = "{\"choices\":[{\"message\":{\"content\":"
+                       + System.Text.Json.JsonSerializer.Serialize(answer) + "}}]}";
+
+            return new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(json) };
+        }
+    }
+
+    private static AppConfig ChainConfig(params (string Id, bool Violates)[] models)
+    {
+        var config = new AppConfig();
+
+        foreach (var (id, _) in models)
+        {
+            config.Models.Add(new ModelProvider
+            {
+                Id = id,
+                Name = id,
+                Format = ApiFormat.OpenAi,
+                Endpoint = "https://relay.invalid/v1/chat/completions",
+                Model = id,
+                ApiKey = "k",
+            });
+        }
+
+        config.ModelChain = models.Select(m => m.Id).ToList();
+        return config;
+    }
+
+    private static ModelSupervisor ChainSupervisor(AppConfig config, PerModelHandler handler) =>
+        new(() => config,
+            new ModelClient(new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(10) }),
+            // 公网那几趟探测别真发出去：测试里假定"网是通的"。
+            new Connectivity(get: (_, _) => Task.FromResult(true)));
+
+    [Fact]
+    public async Task 责任链_便宜的说违规就地拦下_不再问贵的()
+    {
+        var config = ChainConfig(("cheap", true), ("expensive", false));
+        var handler = new PerModelHandler(new() { ["cheap"] = true, ["expensive"] = false });
+        var supervisor = ChainSupervisor(config, handler);
+
+        supervisor.Request("r", "禁令", Snapshot());
+        await WaitUntil(() => supervisor.Lookup("r", Snapshot()).Kind == ModelVerdictKind.Blocked);
+
+        Assert.Equal(new[] { "cheap" }, handler.Asked);   // 贵的那个一次都没被调用
+    }
+
+    [Fact]
+    public async Task 责任链_前一个说放行才问下一个()
+    {
+        var config = ChainConfig(("cheap", false), ("expensive", true));
+        var handler = new PerModelHandler(new() { ["cheap"] = false, ["expensive"] = true });
+        var supervisor = ChainSupervisor(config, handler);
+
+        supervisor.Request("r", "禁令", Snapshot());
+        await WaitUntil(() => supervisor.Lookup("r", Snapshot()).Kind == ModelVerdictKind.Blocked);
+
+        Assert.Equal(new[] { "cheap", "expensive" }, handler.Asked);
+    }
+
+    [Fact]
+    public async Task 责任链_全都说不违规才算放行()
+    {
+        var config = ChainConfig(("a", false), ("b", false));
+        var handler = new PerModelHandler(new() { ["a"] = false, ["b"] = false });
+        var supervisor = ChainSupervisor(config, handler);
+
+        supervisor.Request("r", "禁令", Snapshot());
+        await WaitUntil(() => supervisor.Lookup("r", Snapshot()).Kind == ModelVerdictKind.Allowed);
+
+        Assert.Equal(2, handler.Asked.Count);
+    }
+
+    [Fact]
+    public async Task 换了判断链_旧的结论必须作废()
+    {
+        // 用户实际撞到的：小模型把页面判成"不违规"之后，换成更准的模型也没用 —— 因为那份
+        // 结论一直缓存着，根本不会再去问；只有页面自己变了（刷新一次）才会重新判。
+        // 缓存键里带上链的身份之后，"换模型"就等于"换问题"。
+        var config = ChainConfig(("lenient", false));
+        var handler = new PerModelHandler(new() { ["lenient"] = false, ["strict"] = true });
+        var supervisor = ChainSupervisor(config, handler);
+
+        supervisor.Request("r", "禁令", Snapshot());
+        await WaitUntil(() => supervisor.Lookup("r", Snapshot()).Kind == ModelVerdictKind.Allowed);
+
+        // 换成更严格的那个模型
+        config.ModelChain = new List<string> { "strict" };
+        config.Models.Add(new ModelProvider
+        {
+            Id = "strict",
+            Name = "strict",
+            Format = ApiFormat.OpenAi,
+            Endpoint = "https://relay.invalid/v1/chat/completions",
+            Model = "strict",
+            ApiKey = "k",
+        });
+
+        // 同一份内容：必须重新问，而不是沿用旧结论
+        Assert.Equal(ModelVerdictKind.Unknown, supervisor.Lookup("r", Snapshot()).Kind);
+
+        supervisor.Request("r", "禁令", Snapshot());
+        await WaitUntil(() => supervisor.Lookup("r", Snapshot()).Kind == ModelVerdictKind.Blocked);
+
+        Assert.Equal("strict", handler.Asked[^1]);
+    }
+
     private static async Task WaitUntil(Func<bool> condition)
     {
         for (var i = 0; i < 60 && !condition(); i++)
