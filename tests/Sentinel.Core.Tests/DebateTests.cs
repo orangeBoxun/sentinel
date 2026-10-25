@@ -175,7 +175,7 @@ public class DebateTests
     }
 
     [Fact]
-    public async Task 加了补丁还判不对就继续下一轮_最多三轮()
+    public async Task 没给继续回调时只跑一批_三轮()
     {
         var handler = new ScriptedHandler { Patched = _ => "[false, \"还是漏\", false]" };
 
@@ -190,6 +190,67 @@ public class DebateTests
 
         Assert.Contains(lines, l => l.IsSystem && l.Text.Contains("还没对上"));
         Assert.Contains(lines, l => l.IsSystem && l.Text.Contains("没验证过"));
+    }
+
+    [Fact]
+    public async Task 每三轮停下来问一次_补充的信息会交给两个模型()
+    {
+        var handler = new ScriptedHandler { Patched = _ => "[false, \"还是漏\", false]" };
+
+        var asked = new List<int>();
+        var lines = new List<DebateLine>();
+        var debate = new ModelDebate(new ModelClient(new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(10) }));
+
+        var outcome = await debate.RunAsync(
+            Provider("a"), Provider("b"),
+            "禁止与学习工作无关的浏览", Snapshot(),
+            "违规", "我在查资料",
+            line => lines.Add(line),
+            CancellationToken.None,
+            rounds =>
+            {
+                asked.Add(rounds);
+
+                return Task.FromResult(asked.Count == 1
+                    ? new DebateCheckpoint(true, "这一页是我在查资料，不是摸鱼")
+                    : new DebateCheckpoint(false));
+            });
+
+        Assert.Equal(new[] { 3, 6 }, asked);
+        Assert.Equal(6, outcome!.Rounds);
+        Assert.False(outcome.Verified);
+
+        // 第二批的第一条提示词里就要能看到补充信息（前 14 次是第一批）。
+        Assert.Contains("这一页是我在查资料，不是摸鱼", handler.Calls[14].Body);
+
+        Assert.Contains(lines, l => l.IsSystem && l.Text.Contains("你补充的信息"));
+        Assert.Contains(lines, l => l.IsSystem && l.Text.Contains("你选择收工"));
+    }
+
+    [Fact]
+    public async Task 用户可以在第一批之后就收工()
+    {
+        var handler = new ScriptedHandler { Patched = _ => "[false, \"还是漏\", false]" };
+        var asked = 0;
+
+        var lines = new List<DebateLine>();
+        var debate = new ModelDebate(new ModelClient(new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(10) }));
+
+        var outcome = await debate.RunAsync(
+            Provider("a"), Provider("b"),
+            "禁止与学习工作无关的浏览", Snapshot(),
+            "违规", "我在查资料",
+            line => lines.Add(line),
+            CancellationToken.None,
+            _ =>
+            {
+                asked++;
+                return Task.FromResult(new DebateCheckpoint(false));
+            });
+
+        Assert.Equal(1, asked);
+        Assert.Equal(3, outcome!.Rounds);
+        Assert.Contains(lines, l => l.IsSystem && l.Text.Contains("你选择收工"));
     }
 
     [Fact]

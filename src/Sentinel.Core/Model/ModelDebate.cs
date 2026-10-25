@@ -19,6 +19,12 @@ public sealed record DebateOutcome(IReadOnlyList<string> Patch, bool Verified, i
 }
 
 /// <summary>
+/// 每跑完一批（<see cref="ModelDebate.RoundsPerBatch"/> 轮）仍然没通过时，问用户要不要继续。
+/// <paramref name="Note"/> 是用户顺手补充的信息 —— 会原样交给两个模型，让它们按这个理解这一页。
+/// </summary>
+public sealed record DebateCheckpoint(bool Continue, string? Note = null);
+
+/// <summary>
 /// 「模型讨论」：对着用户的判断找出会"有把握地判死"的一方，让兜住的那一方逐轮指出它错在哪，
 /// 它据此写补丁；补丁会被真的加进禁令、重新判这一页来验证，不通过就再来一轮。
 ///
@@ -36,8 +42,10 @@ public sealed record DebateOutcome(IReadOnlyList<string> Patch, bool Verified, i
 public sealed class ModelDebate
 {
     private const int MaxBodyChars = 2000;
-    private const int MaxRounds = 3;
     private const int MaxPatchLines = 3;
+
+    /// <summary>跑完这么多轮还没通过，就停下来问用户一次（继续与否、要不要补充信息）。</summary>
+    public const int RoundsPerBatch = 3;
 
     private readonly ModelClient _client;
     private readonly UsageStore? _usage;
@@ -53,6 +61,10 @@ public sealed class ModelDebate
     /// 会不会交给下一个）→ 循环「判对的诊断 → 判错的写补丁 → 真加进去重判」直到判对。
     /// </summary>
     /// <param name="yourVerdict">用户自己的判断（"违规" / "不违规" / null = 不确定）。</param>
+    /// <param name="checkpoint">
+    /// 每跑完 <see cref="RoundsPerBatch"/> 轮还没通过时调用一次；返回是否继续（以及用户补充的信息）。
+    /// 传 null 就只跑一批。
+    /// </param>
     public async Task<DebateOutcome?> RunAsync(
         ModelProvider a,
         ModelProvider b,
@@ -61,7 +73,8 @@ public sealed class ModelDebate
         string? yourVerdict,
         string? yourReason,
         Action<DebateLine> say,
-        CancellationToken token)
+        CancellationToken token,
+        Func<int, Task<DebateCheckpoint>>? checkpoint = null)
     {
         var page = Page(snapshot);
         var goal = ParseVerdict(yourVerdict);
@@ -130,131 +143,137 @@ public sealed class ModelDebate
         var wrongResult = correct is null ? null : ReferenceEquals(correct, a) ? b1 : a1;
 
         var patch = new List<string>();
+        var notes = new List<string>();
         var current = instruction;
         string? failure = null;
         string? lastDiagnosis = null;
         var rounds = 0;
         var passed = false;
+        var stoppedByUser = false;
 
-        for (var round = 1; round <= MaxRounds && !token.IsCancellationRequested; round++)
+        // 一批 RoundsPerBatch 轮；没过就停下来问用户要不要再来一批（顺便可以补充信息）。
+        while (!passed && !token.IsCancellationRequested)
         {
-            rounds = round;
-
-            List<(ModelProvider Who, string? Text)> attempts;
-
-            if (correct is not null && wrong is not null && wrongResult is not null && goal is { } mark)
+            for (var i = 0; i < RoundsPerBatch && !passed && !token.IsCancellationRequested; i++)
             {
-                say(new DebateLine("系统",
-                    $"第 {round} 轮：先让判对的「{correct.Name}」指出「{wrong.Name}」错在哪一步，"
-                    + $"再由「{wrong.Name}」照着写补丁。", IsSystem: true));
+                rounds++;
+                var round = rounds;
 
-                lastDiagnosis = await AskAsync(
-                    correct,
-                    DiagnosisPrompt(correct, correctResult!, wrong, wrongResult, instruction, page, mark, failure),
-                    token).ConfigureAwait(false);
+                List<(ModelProvider Who, string? Text)> attempts;
 
-                say(new DebateLine(correct.Name, lastDiagnosis ?? "(没答上来)"));
-
-                var fix = await AskAsync(
-                    wrong,
-                    FixPrompt(wrong, wrongResult, correct, correctResult!, instruction, page, mark,
-                        lastDiagnosis, failure),
-                    token).ConfigureAwait(false);
-
-                say(new DebateLine(wrong.Name, fix ?? "(没答上来)"));
-
-                // 判错的一方要是又绕开不写，就让判对的一方直接给一条 —— 总得有人把话说到点子上。
-                if (ExtractPatch(fix).Count == 0)
+                if (correct is not null && wrong is not null && wrongResult is not null && goal is { } mark)
                 {
                     say(new DebateLine("系统",
-                        $"「{wrong.Name}」没给出可用的补丁，改让「{correct.Name}」写一条。", IsSystem: true));
+                        $"第 {round} 轮：先让判对的「{correct.Name}」指出「{wrong.Name}」错在哪一步，"
+                        + $"再由「{wrong.Name}」照着写补丁。", IsSystem: true));
 
-                    fix = await AskAsync(
+                    lastDiagnosis = await AskAsync(
                         correct,
-                        FixPrompt(correct, correctResult!, wrong, wrongResult, instruction, page, mark,
-                            lastDiagnosis, failure),
+                        DiagnosisPrompt(correct, correctResult!, wrong, wrongResult, instruction, page, mark, failure, notes),
                         token).ConfigureAwait(false);
 
-                    say(new DebateLine(correct.Name, fix ?? "(没答上来)"));
+                    say(new DebateLine(correct.Name, lastDiagnosis ?? "(没答上来)"));
+
+                    var fix = await AskAsync(
+                        wrong,
+                        FixPrompt(wrong, wrongResult, correct, correctResult!, instruction, page, mark,
+                            lastDiagnosis, failure, notes),
+                        token).ConfigureAwait(false);
+
+                    say(new DebateLine(wrong.Name, fix ?? "(没答上来)"));
+
+                    // 判错的一方要是又绕开不写，就让判对的一方直接给一条 —— 总得有人把话说到点子上。
+                    if (ExtractPatch(fix).Count == 0)
+                    {
+                        say(new DebateLine("系统",
+                            $"「{wrong.Name}」没给出可用的补丁，改让「{correct.Name}」写一条。", IsSystem: true));
+
+                        fix = await AskAsync(
+                            correct,
+                            FixPrompt(correct, correctResult!, wrong, wrongResult, instruction, page, mark,
+                                lastDiagnosis, failure, notes),
+                            token).ConfigureAwait(false);
+
+                        say(new DebateLine(correct.Name, fix ?? "(没答上来)"));
+                    }
+
+                    attempts = new List<(ModelProvider, string?)> { (wrong, fix) };
+                }
+                else
+                {
+                    say(new DebateLine("系统",
+                        $"第 {round} 轮：两家各写一条补丁，然后把补丁加进禁令、重新判这一页来验证。",
+                        IsSystem: true));
+
+                    var pa = await AskAsync(a, ProposalPrompt(a, b, a1, b1, current, page, goal, failure, notes), token)
+                        .ConfigureAwait(false);
+                    say(new DebateLine(a.Name, pa ?? "(没答上来)"));
+
+                    var pb = await AskAsync(b, ProposalPrompt(b, a, b1, a1, current, page, goal, failure, notes), token)
+                        .ConfigureAwait(false);
+                    say(new DebateLine(b.Name, pb ?? "(没答上来)"));
+
+                    var ordered = new List<(ModelProvider P, ModelCallResult R, string? Text)>
+                    {
+                        (a, a1, pa),
+                        (b, b1, pb),
+                    };
+
+                    if (goal is { } gg)
+                        ordered = ordered.OrderBy(o => Catches(o.R, gg) ? 0 : 1).ToList();
+
+                    attempts = ordered.Select(o => (o.P, o.Text)).ToList();
                 }
 
-                attempts = new List<(ModelProvider, string?)> { (wrong, fix) };
-            }
-            else
-            {
-                say(new DebateLine("系统",
-                    $"第 {round} 轮：两家各写一条补丁，然后把补丁加进禁令、重新判这一页来验证。",
-                    IsSystem: true));
+                var best = (Score: int.MinValue, Trial: current, Patch: patch.ToList(),
+                            Results: ((ModelCallResult?)null, (ModelCallResult?)null));
 
-                var pa = await AskAsync(a, ProposalPrompt(a, b, a1, b1, current, page, goal, failure), token)
-                    .ConfigureAwait(false);
-                say(new DebateLine(a.Name, pa ?? "(没答上来)"));
-
-                var pb = await AskAsync(b, ProposalPrompt(b, a, b1, a1, current, page, goal, failure), token)
-                    .ConfigureAwait(false);
-                say(new DebateLine(b.Name, pb ?? "(没答上来)"));
-
-                var ordered = new List<(ModelProvider P, ModelCallResult R, string? Text)>
+                foreach (var (who, text) in attempts)
                 {
-                    (a, a1, pa),
-                    (b, b1, pb),
-                };
+                    var lines = ExtractPatch(text);
 
-                if (goal is { } gg)
-                    ordered = ordered.OrderBy(o => Catches(o.R, gg) ? 0 : 1).ToList();
+                    if (lines.Count == 0)
+                        continue;
 
-                attempts = ordered.Select(o => (o.P, o.Text)).ToList();
-            }
-
-            var best = (Score: int.MinValue, Trial: current, Patch: patch.ToList(),
-                        Results: ((ModelCallResult?)null, (ModelCallResult?)null));
-
-            foreach (var (who, text) in attempts)
-            {
-                var lines = ExtractPatch(text);
-
-                if (lines.Count == 0)
-                    continue;
-
-                var merged = patch.Concat(lines).Distinct().ToList();
-                var trial = current + "\n" + string.Join("\n", lines);
-
-                say(new DebateLine("系统",
-                    $"试「{who.Name}」这条：{string.Join(" ", lines)}", IsSystem: true));
-
-                var a2 = await JudgeAsync(a, trial, snapshot, token).ConfigureAwait(false);
-                var b2 = await JudgeAsync(b, trial, snapshot, token).ConfigureAwait(false);
-
-                say(new DebateLine("系统",
-                    $"  加上去重判：{a.Name} {Short(a2)}；{b.Name} {Short(b2)}", IsSystem: true));
-
-                var score = Closeness(a2, b2, goal);
-
-                if (Passes(a2, b2, goal))
-                {
-                    patch = merged;
-                    current = trial;
-                    best = (score, trial, merged, (a2, b2));
-                    passed = true;
+                    var merged = patch.Concat(lines).Distinct().ToList();
+                    var trial = current + "\n" + string.Join("\n", lines);
 
                     say(new DebateLine("系统",
-                        "  ✓ 不会漏了：这类页面会落到「交给下一个模型」或直接判对。", IsSystem: true));
-                    break;
+                        $"试「{who.Name}」这条：{string.Join(" ", lines)}", IsSystem: true));
+
+                    var a2 = await JudgeAsync(a, trial, snapshot, token).ConfigureAwait(false);
+                    var b2 = await JudgeAsync(b, trial, snapshot, token).ConfigureAwait(false);
+
+                    say(new DebateLine("系统",
+                        $"  加上去重判：{a.Name} {Short(a2)}；{b.Name} {Short(b2)}", IsSystem: true));
+
+                    var score = Closeness(a2, b2, goal);
+
+                    if (Passes(a2, b2, goal))
+                    {
+                        patch = merged;
+                        current = trial;
+                        best = (score, trial, merged, (a2, b2));
+                        passed = true;
+
+                        say(new DebateLine("系统",
+                            "  ✓ 不会漏了：这类页面会落到「交给下一个模型」或直接判对。", IsSystem: true));
+                        break;
+                    }
+
+                    if (score > best.Score)
+                        best = (score, trial, merged, (a2, b2));
+
+                    say(new DebateLine("系统", "  ✗ 还不对。", IsSystem: true));
                 }
 
-                if (score > best.Score)
-                    best = (score, trial, merged, (a2, b2));
+                if (passed)
+                    break;
 
-                say(new DebateLine("系统", "  ✗ 还不对。", IsSystem: true));
-            }
-
-            if (passed)
-                break;
-
-            if (best.Score == int.MinValue)
-            {
-                failure = "上一轮没有拿到可用的「补丁：」小节。这一轮只输出那个小节，不要别的。";
-                say(new DebateLine("系统", failure, IsSystem: true));
+                if (best.Score == int.MinValue)
+                {
+                    failure = "上一轮没有拿到可用的「补丁：」小节。这一轮只输出那个小节，不要别的。";
+                    say(new DebateLine("系统", failure, IsSystem: true));
                 continue;
             }
 
@@ -267,13 +286,37 @@ public sealed class ModelDebate
                       + "换一条更直接、更通用的规则；一句不够就再给一条（会一起追加）。";
 
             say(new DebateLine("系统", failure, IsSystem: true));
+            }
+
+            if (passed || token.IsCancellationRequested || checkpoint is null)
+                break;
+
+            say(new DebateLine("系统",
+                $"已经跑了 {rounds} 轮，还没通过 —— 停下来等你决定：可以再跑 {RoundsPerBatch} 轮，"
+                + "也可以顺便补充点信息给两个模型。", IsSystem: true));
+
+            var answer = await checkpoint(rounds).ConfigureAwait(false);
+
+            if (!answer.Continue)
+            {
+                stoppedByUser = true;
+                break;
+            }
+
+            if (!string.IsNullOrWhiteSpace(answer.Note))
+            {
+                notes.Add(answer.Note.Trim());
+                say(new DebateLine("系统", $"你补充的信息：{answer.Note.Trim()}", IsSystem: true));
+            }
         }
 
         if (!passed)
         {
             say(new DebateLine("系统",
-                $"✗ 试了 {rounds} 轮，还是没通过。下面这些句子是候选、没验证过，别直接依赖；"
-                + "也可以考虑把判错的那家从链首挪走，或者换一个更强的模型放在前面。",
+                stoppedByUser
+                    ? $"✗ 你选择收工（已经跑了 {rounds} 轮）。下面这些句子是候选、没验证过，别直接依赖。"
+                    : $"✗ 试了 {rounds} 轮，还是没通过。下面这些句子是候选、没验证过，别直接依赖；"
+                      + "也可以考虑把判错的那家从链首挪走，或者换一个更强的模型放在前面。",
                 IsSystem: true));
 
             return new DebateOutcome(patch, false, rounds, failure);
@@ -426,16 +469,18 @@ public sealed class ModelDebate
         string instruction,
         string page,
         bool goal,
-        string? failure)
+        string? failure,
+        IReadOnlyList<string> notes)
     {
         var last = string.IsNullOrWhiteSpace(failure) ? "" : "\n上一轮的验证结果：\n" + failure + "\n";
+        var extra = Notes(notes);
 
         return $"""
             禁令（用户写给自己看的）：
             {instruction}
 
             {page}
-
+            {extra}
             同一页上两家的判断：
             - 你（{correct.Name}）：{Short(correctResult)}
             - 另一个模型（{wrong.Name}）：{Short(wrongResult)}
@@ -463,10 +508,12 @@ public sealed class ModelDebate
         string page,
         bool goal,
         string? diagnosis,
-        string? failure)
+        string? failure,
+        IReadOnlyList<string> notes)
     {
         var last = string.IsNullOrWhiteSpace(failure) ? "" : "\n上一轮的验证结果：\n" + failure + "\n";
         var cross = string.IsNullOrWhiteSpace(diagnosis) ? "" : "\n另一个模型指出的问题：\n" + diagnosis + "\n";
+        var extra = Notes(notes);
 
         // 正常情况下是漏掉的那家自己写；它绕开不写时，会让兜住的那家替它写。
         var selfIsWrong = !Catches(own, goal);
@@ -484,7 +531,7 @@ public sealed class ModelDebate
             {instruction}
 
             {page}
-
+            {extra}
             你自己的判断：{Short(own)}
             另一个模型（{other.Name}）的判断：{Short(otherResult)}
             {blame}
@@ -511,7 +558,8 @@ public sealed class ModelDebate
         string instruction,
         string page,
         bool? goal,
-        string? failure)
+        string? failure,
+        IReadOnlyList<string> notes)
     {
         var facts = goal is { } g
             ? Scorecard(self, own, other, otherResult, g)
@@ -519,13 +567,14 @@ public sealed class ModelDebate
 
         var last = string.IsNullOrWhiteSpace(failure) ? "" : "\n上一轮的验证结果：\n" + failure + "\n";
         var goalWord = goal is { } gw ? Word(gw) : "正确";
+        var extra = Notes(notes);
 
         return $"""
             禁令（现在这一版；补丁会被逐字追加到后面，用来重新判断）：
             {instruction}
 
             {page}
-
+            {extra}
             你们刚才的判断：
             - 你自己（{self.Name}）：{Short(own)}
             - 另一个模型（{other.Name}）：{Short(otherResult)}
@@ -543,6 +592,13 @@ public sealed class ModelDebate
             - 不评价对方、不评价禁令是否自相矛盾、不复述禁令原文。
             """;
     }
+
+    /// <summary>用户在半路补充的信息 —— 原样交给两个模型，它们得按这个理解这一页。</summary>
+    private static string Notes(IReadOnlyList<string> notes) =>
+        notes.Count == 0
+            ? ""
+            : "\n用户补充的信息（按这个理解这一页）：\n"
+              + string.Join("\n", notes.Select(n => "· " + n)) + "\n";
 
     private const string SystemPrompt =
         "你们在帮用户校准一条内容禁令：同一页上两个模型的看法不一致。目标不是分胜负，" +

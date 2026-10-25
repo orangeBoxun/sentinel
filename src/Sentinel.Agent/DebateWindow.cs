@@ -97,8 +97,9 @@ public sealed class DebateWindow : Window
 
         inputs.Children.Add(new TextBlock
         {
-            Text = "让两个模型各自判一次，按你填的标准找出判错的那一方：判对的那一方先指出它错在哪一步，"
-                   + "再由它写补丁 —— 补丁会被真的加进禁令、重新判这一页，判不对就继续改（最多 3 轮）。",
+            Text = "让两个模型各自判一次，按你填的标准找出会\"有把握地判死\"的那一方：另一方先指出它错在哪，"
+                   + "它照着写补丁 —— 补丁会被真的加进禁令、重新判这一页，判不对就继续。"
+                   + "每 3 轮停下来问你一次，可以继续，也可以补充信息给两个模型。",
             TextWrapping = TextWrapping.Wrap,
             Margin = new Thickness(0, 0, 0, 10),
         });
@@ -126,7 +127,7 @@ public sealed class DebateWindow : Window
         inputs.Children.Add(new TextBlock
         {
             Text = "开始时会现读一次所选窗口的内容（读到什么，日志第一行会写出来）。"
-                   + "每一轮要发 4 次左右请求，最多 3 轮，会产生费用；中途可以点「停止」。",
+                   + "每轮要发 4 次左右请求，每 3 轮会停下来问你一次，中途可以点「停止」。",
             TextWrapping = TextWrapping.Wrap,
             Foreground = (System.Windows.Media.Brush)Application.Current.FindResource("TextSecondary"),
             Margin = new Thickness(0, 10, 0, 0),
@@ -317,7 +318,8 @@ public sealed class DebateWindow : Window
                 opinion,
                 _reason.Text.Trim(),
                 line => Dispatcher.Invoke(() => Append(line)),
-                _cts.Token);
+                _cts.Token,
+                rounds => Task.FromResult(AskCheckpoint(rounds)));
 
             if (outcome is not null && outcome.Patch.Count > 0)
             {
@@ -338,6 +340,111 @@ public sealed class DebateWindow : Window
             _cts?.Dispose();
             _cts = null;
         }
+    }
+
+    /// <summary>
+    /// 每跑完 3 轮还没通过时问一次：继续吗？顺手补充的信息会原样交给两个模型。
+    /// 决策权在这里交回用户 —— 后面每 3 轮都还会再问一次。
+    /// </summary>
+    private DebateCheckpoint AskCheckpoint(int rounds)
+    {
+        var result = new DebateCheckpoint(false);
+        var dialog = BuildCheckpointWindow(rounds, r => result = r);
+
+        dialog.ShowDialog();
+
+        return result;
+    }
+
+    /// <summary>建那个"要不要继续"的小窗（单独拆出来是为了能被离屏渲染检查布局）。</summary>
+    public Window BuildCheckpointWindow(int rounds, Action<DebateCheckpoint> done)
+    {
+        // 主题里的 TextBox 是"固定高度的单行输入框"，这里必须显式覆盖，否则又变成一条细带。
+        var note = new TextBox
+        {
+            AcceptsReturn = true,
+            TextWrapping = TextWrapping.Wrap,
+            Height = double.NaN,
+            MinHeight = 80,
+            VerticalContentAlignment = VerticalAlignment.Top,
+            FontFamily = new System.Windows.Media.FontFamily("Microsoft YaHei UI"),
+            Padding = new Thickness(8),
+        };
+
+        var go = new Button
+        {
+            Content = "继续再跑 3 轮", Padding = new Thickness(18, 6, 18, 6), IsDefault = true,
+        };
+
+        var stop = new Button
+        {
+            Content = "收工", Padding = new Thickness(18, 6, 18, 6), Margin = new Thickness(8, 0, 0, 0),
+            IsCancel = true,
+        };
+
+        var buttons = new StackPanel
+        {
+            Orientation = Orientation.Horizontal,
+            HorizontalAlignment = HorizontalAlignment.Right,
+            Margin = new Thickness(0, 14, 0, 0),
+        };
+
+        buttons.Children.Add(go);
+        buttons.Children.Add(stop);
+
+        var body = new StackPanel { Margin = new Thickness(20) };
+
+        body.Children.Add(new TextBlock
+        {
+            Text = $"已经跑了 {rounds} 轮，还没通过。",
+            FontWeight = FontWeights.SemiBold,
+            TextWrapping = TextWrapping.Wrap,
+        });
+
+        body.Children.Add(new TextBlock
+        {
+            Text = "继续也可以，收工也可以 —— 由你决定。"
+                   + "如果两边都漏了某些信息（比如\"这页是我在查资料\"），写在下面，会原样交给两个模型。",
+            TextWrapping = TextWrapping.Wrap,
+            Margin = new Thickness(0, 8, 0, 0),
+            Foreground = (System.Windows.Media.Brush)Application.Current.FindResource("TextSecondary"),
+        });
+
+        body.Children.Add(new TextBlock
+        {
+            Text = "补充信息（可空）",
+            Margin = new Thickness(0, 12, 0, 4),
+            Foreground = (System.Windows.Media.Brush)Application.Current.FindResource("TextSecondary"),
+        });
+
+        body.Children.Add(note);
+        body.Children.Add(buttons);
+
+        var dialog = new Window
+        {
+            Title = "要不要继续讨论",
+            Width = 540,
+            SizeToContent = SizeToContent.Height,
+            WindowStartupLocation = WindowStartupLocation.CenterOwner,
+            Owner = this,
+            ShowInTaskbar = false,
+            ResizeMode = ResizeMode.NoResize,
+            Content = body,
+        };
+
+        go.Click += (_, _) =>
+        {
+            done(new DebateCheckpoint(true, note.Text.Trim()));
+            dialog.Close();
+        };
+
+        stop.Click += (_, _) =>
+        {
+            done(new DebateCheckpoint(false));
+            dialog.Close();
+        };
+
+        return dialog;
     }
 
     private void Append(DebateLine line)
